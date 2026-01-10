@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { detectVcs, VcsType } from '../utils/vcs.js';
+import type { ChannelSettings } from '../utils/config.js';
 
 export interface AgentMessage {
   type: 'status' | 'result' | 'error';
@@ -15,6 +16,7 @@ export type MessageCallback = (message: AgentMessage) => Promise<void>;
  * @param prompt The user's prompt to execute
  * @param onMessage Callback for streaming status updates
  * @param workingPath The working directory for this execution
+ * @param channelSettings The channel settings (for autoUpdate, etc.)
  * @param resumeSessionId Optional session ID to resume a previous conversation
  * @returns The session ID for this execution
  */
@@ -22,6 +24,7 @@ export async function executeClaudePrompt(
   prompt: string,
   onMessage: MessageCallback,
   workingPath: string,
+  channelSettings: ChannelSettings,
   resumeSessionId?: string
 ): Promise<string> {
   // Save the original working directory
@@ -63,6 +66,55 @@ export async function executeClaudePrompt(
     // Detect VCS type
     const vcsType = detectVcs(workingPath);
     console.log(`[Agent] Detected VCS type: ${vcsType}`);
+
+    // Auto-update repository if enabled and this is a new conversation
+    if (channelSettings.autoUpdate && !resumeSessionId) {
+      console.log('[Agent] Auto-update is enabled, updating repository...');
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      try {
+        await onMessage({
+          type: 'status',
+          content: '🔄 Updating repository...'
+        });
+
+        let updateOutput: string;
+
+        if (vcsType === 'git') {
+          console.log('[Agent] Running git pull...');
+          const result = await execAsync('git pull', {
+            cwd: workingPath,
+            timeout: 30000
+          });
+          updateOutput = result.stdout || result.stderr || 'Git pull completed';
+          console.log('[Agent] Git pull output:', updateOutput.trim());
+        } else if (vcsType === 'svn') {
+          console.log('[Agent] Running svn update...');
+          const result = await execAsync('svn update', {
+            cwd: workingPath,
+            timeout: 30000
+          });
+          updateOutput = result.stdout || result.stderr || 'SVN update completed';
+          console.log('[Agent] SVN update output:', updateOutput.trim());
+        } else {
+          console.log('[Agent] No VCS detected, skipping auto-update');
+          updateOutput = 'No version control detected';
+        }
+
+        await onMessage({
+          type: 'status',
+          content: '✅ Repository updated'
+        });
+      } catch (updateError) {
+        console.error('[Agent] Auto-update failed:', updateError);
+        await onMessage({
+          type: 'status',
+          content: '⚠️ Repository update failed, continuing anyway...'
+        });
+      }
+    }
 
     // Configure the agent with all tools and bypass permissions
     const options = {

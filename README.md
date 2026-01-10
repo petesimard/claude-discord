@@ -269,8 +269,9 @@ CHANNEL_MAPPINGS={"1234567890123456789":{"path":"/path/to/project1"},"9876543210
 
 **Settings Object:**
 
-Each channel's settings object currently supports:
+Each channel's settings object supports:
 - `path`: (Required) The working directory for this channel where Claude Code will execute commands and access files
+- `autoUpdate`: (Optional) Automatically run `git pull` or `svn update` before starting new conversations (default: `false`)
 
 **Example Configuration:**
 
@@ -278,8 +279,11 @@ Each channel's settings object currently supports:
 # Single channel
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project"}}
 
-# Multiple channels with different projects
-CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app"},"9876543210":{"path":"/home/user/api-server"},"5555555555":{"path":"/home/user/mobile-app"}}
+# Channel with auto-update enabled
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","autoUpdate":true}}
+
+# Multiple channels with different projects and settings
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
 ```
 
 **Behavior:**
@@ -287,7 +291,13 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app"},"9876543210":{"path
 - The bot only responds in channels that are configured in the mappings
 - Each channel operates independently with its own working directory
 - VCS detection (Git/SVN) happens per directory, so different channels can use different version control systems
-- Future enhancements can add more per-channel settings (e.g., allowed tools, permissions, model selection)
+- When `autoUpdate` is enabled:
+  - The repository is updated automatically before **new** conversations (not when continuing existing conversations)
+  - For Git: runs `git pull`
+  - For SVN: runs `svn update`
+  - Shows status updates in Discord ("🔄 Updating repository..." → "✅ Repository updated")
+  - If update fails, shows a warning but continues with the conversation
+- Additional settings can be added per channel (e.g., allowed tools, permissions, model selection)
 
 **Startup logging:**
 

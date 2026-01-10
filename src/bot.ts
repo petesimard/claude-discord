@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder } from 'discord.js';
-import { config, getWorkingPathForChannel, isChannelAllowed } from './utils/config.js';
+import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed } from './utils/config.js';
 import { handleClaudeCommand, handleClaudeContinueCommand, createContinueButton, createResultEmbed, createErrorEmbed } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
@@ -295,11 +295,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.editReply({ embeds: [initialEmbed] });
 
-        // Get the working path for this channel
-        const workingPath = getWorkingPathForChannel(channelId || '');
-        if (!workingPath) {
+        // Get the channel settings
+        const channelSettings = getChannelSettings(channelId || '');
+        if (!channelSettings) {
           await interaction.editReply({
-            content: '❌ No working directory configured for this channel.',
+            content: '❌ No settings configured for this channel.',
           });
           return;
         }
@@ -345,7 +345,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
               console.error('Failed to update Discord message:', discordError);
             }
           },
-          workingPath,
+          channelSettings.path,
+          channelSettings,
           sessionId // Pass the session ID to resume
         );
 

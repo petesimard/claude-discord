@@ -5,6 +5,7 @@ dotenvConfig();
 
 export interface ChannelSettings {
   path: string;
+  autoUpdate?: boolean; // Auto git pull or svn update before new conversations
 }
 
 export interface Config {
@@ -35,9 +36,12 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
     if (typeof parsed === 'object' && parsed !== null) {
       for (const [channelId, settings] of Object.entries(parsed)) {
         if (typeof settings === 'object' && settings !== null && 'path' in settings) {
-          const channelSettings = settings as { path: string };
+          const channelSettings = settings as { path: string; autoUpdate?: boolean };
           if (typeof channelSettings.path === 'string') {
-            mappings.set(channelId, { path: channelSettings.path });
+            mappings.set(channelId, {
+              path: channelSettings.path,
+              autoUpdate: channelSettings.autoUpdate === true
+            });
           }
         }
       }
@@ -93,6 +97,14 @@ export function loadConfig(): Config {
 export function getWorkingPathForChannel(channelId: string): string | undefined {
   const settings = config.channelMappings.get(channelId);
   return settings?.path;
+}
+
+/**
+ * Get the channel settings for a specific channel
+ * Returns undefined if channel is not configured
+ */
+export function getChannelSettings(channelId: string): ChannelSettings | undefined {
+  return config.channelMappings.get(channelId);
 }
 
 /**

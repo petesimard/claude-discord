@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
-import { getWorkingPathForChannel, isChannelAllowed } from '../utils/config.js';
+import { getChannelSettings, isChannelAllowed } from '../utils/config.js';
 import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
 
 // Define the /claude command structure
@@ -70,10 +70,10 @@ export async function handleClaudeCommand(
 
     await interaction.editReply({ embeds: [initialEmbed] });
 
-    // Get the working path for this channel
-    const workingPath = getWorkingPathForChannel(channelId);
-    if (!workingPath) {
-      throw new Error(`No working path configured for channel ${channelId}`);
+    // Get the channel settings
+    const channelSettings = getChannelSettings(channelId);
+    if (!channelSettings) {
+      throw new Error(`No settings configured for channel ${channelId}`);
     }
 
     // Execute the prompt with streaming updates (starts fresh - no session resumption)
@@ -117,7 +117,8 @@ export async function handleClaudeCommand(
           console.error('Failed to update Discord message:', discordError);
         }
       },
-      workingPath
+      channelSettings.path,
+      channelSettings
     );
 
     // If no result was sent, ensure we have a completion message
@@ -187,10 +188,10 @@ export async function handleClaudeContinueCommand(
 
     await interaction.editReply({ embeds: [initialEmbed] });
 
-    // Get the working path for this channel
-    const workingPath = getWorkingPathForChannel(channelId);
-    if (!workingPath) {
-      throw new Error(`No working path configured for channel ${channelId}`);
+    // Get the channel settings
+    const channelSettings = getChannelSettings(channelId);
+    if (!channelSettings) {
+      throw new Error(`No settings configured for channel ${channelId}`);
     }
 
     // Execute the prompt with the existing session ID
@@ -234,7 +235,8 @@ export async function handleClaudeContinueCommand(
           console.error('Failed to update Discord message:', discordError);
         }
       },
-      workingPath,
+      channelSettings.path,
+      channelSettings,
       resumeSessionId // Pass the session ID to resume
     );
 
