@@ -67,13 +67,27 @@ export async function executeClaudePrompt(
         'WebFetch'
       ],
       permissionMode: 'bypassPermissions' as const,
-      ...(resumeSessionId && { resume: resumeSessionId })
+      ...(resumeSessionId && { resume: resumeSessionId }),
+      // Enable debug logging to capture Claude CLI output
+      onStderr: (data: string) => {
+        console.error('[Agent] Claude CLI stderr:', data);
+      },
+      onStdout: (data: string) => {
+        console.log('[Agent] Claude CLI stdout:', data);
+      }
     };
 
     let currentTool: string | null = null;
     let sessionId: string | undefined = resumeSessionId;
     let hasResult = false;
     let hasError = false;
+
+    console.log('[Agent] Starting query with options:', JSON.stringify({
+      workingDirectory: options.workingDirectory,
+      allowedTools: options.allowedTools,
+      permissionMode: options.permissionMode,
+      resume: options.resume || 'none'
+    }));
 
     // Execute the query and stream messages
     for await (const message of query({ prompt, options })) {
