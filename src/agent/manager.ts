@@ -1,5 +1,4 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { config } from '../utils/config.js';
 import { detectVcs, VcsType } from '../utils/vcs.js';
 
 export interface AgentMessage {
@@ -15,12 +14,14 @@ export type MessageCallback = (message: AgentMessage) => Promise<void>;
  * Execute a Claude Code prompt with streaming updates
  * @param prompt The user's prompt to execute
  * @param onMessage Callback for streaming status updates
+ * @param workingPath The working directory for this execution
  * @param resumeSessionId Optional session ID to resume a previous conversation
  * @returns The session ID for this execution
  */
 export async function executeClaudePrompt(
   prompt: string,
   onMessage: MessageCallback,
+  workingPath: string,
   resumeSessionId?: string
 ): Promise<string> {
   // Save the original working directory
@@ -29,25 +30,25 @@ export async function executeClaudePrompt(
   try {
     console.log(`[Agent] Executing prompt (session: ${resumeSessionId || 'new'})`);
     console.log(`[Agent] Original working directory: ${originalCwd}`);
-    console.log(`[Agent] Target working directory: ${config.workingPath}`);
+    console.log(`[Agent] Target working directory: ${workingPath}`);
 
     // Check if the working directory exists
     const fs = await import('fs');
-    if (!fs.existsSync(config.workingPath)) {
-      throw new Error(`Working directory does not exist: ${config.workingPath}\n\nPlease create the directory or update WORKING_DIR in your .env file.`);
+    if (!fs.existsSync(workingPath)) {
+      throw new Error(`Working directory does not exist: ${workingPath}\n\nPlease create the directory or update WORKING_DIR in your .env file.`);
     }
 
     // Change to the configured working directory
-    process.chdir(config.workingPath);
+    process.chdir(workingPath);
     console.log(`[Agent] Changed to working directory: ${process.cwd()}`);
 
     // Detect VCS type
-    const vcsType = detectVcs(config.workingPath);
+    const vcsType = detectVcs(workingPath);
     console.log(`[Agent] Detected VCS type: ${vcsType}`);
 
     // Configure the agent with all tools and bypass permissions
     const options = {
-      workingDirectory: config.workingPath,
+      workingDirectory: workingPath,
       allowedTools: [
         'Read',
         'Write',

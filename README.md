@@ -14,6 +14,8 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 - 🎨 Rich Discord embeds with color-coded results (blue while working, green on success, red on error)
 - ⏱️ Live execution time tracking
 - 🔒 Secure configuration via environment variables
+- 🗺️ **Channel-to-directory mappings** - Different channels work on different projects
+- 📨 **Welcome messages** - Bot sends instructions to allowed channels when it connects
 - 🚪 Optional channel restriction (limit bot to specific channels)
 
 ## Prerequisites
@@ -97,12 +99,14 @@ See [Claude Code setup](https://code.claude.com/docs/en/setup) for Windows and o
    DISCORD_TOKEN=your_discord_bot_token_here
    WORKING_DIR=/path/to/your/working/directory
    ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   CHANNEL_MAPPINGS=
    ALLOWED_CHANNEL_ID=
    ```
 
    - `DISCORD_TOKEN`: Your Discord bot token from step 1
-   - `WORKING_DIR`: The directory where Claude Code will work (read/write files, run commands)
+   - `WORKING_DIR`: The default directory where Claude Code will work (read/write files, run commands)
    - `ANTHROPIC_API_KEY`: Your Anthropic API key from step 3
+   - `CHANNEL_MAPPINGS`: (Optional) Map specific channels to different working directories - see below
    - `ALLOWED_CHANNEL_ID`: (Optional) Restrict bot to a specific channel - see below
 
 ## Usage
@@ -248,12 +252,62 @@ Bot: ✅ Changes Committed to SVN
 
 ### Working Directory (WORKING_DIR)
 
-The `WORKING_DIR` environment variable sets where Claude Code operates:
+The `WORKING_DIR` environment variable sets the **default** working directory where Claude Code operates:
 
 - All file operations (Read, Write, Edit) happen relative to this directory
 - Bash commands execute in this directory
 - Can be an absolute or relative path
 - Ensure the bot has read/write permissions
+- Used as the fallback when no channel-specific mapping exists
+
+### Channel-Specific Working Directories (CHANNEL_MAPPINGS)
+
+You can map specific Discord channels to different working directories using the `CHANNEL_MAPPINGS` environment variable. This is useful when you want different channels to work on different projects.
+
+**⚠️ Important:** When `CHANNEL_MAPPINGS` is configured, the bot will **ONLY respond in the mapped channels**. This provides implicit channel restriction based on your project mappings.
+
+**Configuration:**
+
+Set `CHANNEL_MAPPINGS` to a JSON object mapping channel IDs to directory paths:
+
+```env
+CHANNEL_MAPPINGS={"1234567890123456789":"/path/to/project1","9876543210987654321":"/path/to/project2"}
+```
+
+**To get a channel ID:**
+
+1. Enable Developer Mode in Discord:
+   - User Settings → App Settings → Advanced → Enable "Developer Mode"
+2. Right-click on a channel
+3. Select "Copy ID"
+
+**Behavior:**
+
+- **If `CHANNEL_MAPPINGS` is configured:** The bot will ONLY respond in the mapped channels and use the specified directories
+- **If `CHANNEL_MAPPINGS` is not set:** The bot will use `ALLOWED_CHANNEL_ID` for access control (see below)
+- Each mapped channel operates independently with its own working directory
+- VCS detection (Git/SVN) happens per directory, so different channels can use different version control systems
+
+**Example:**
+
+```env
+WORKING_DIR=/home/user/default-project
+CHANNEL_MAPPINGS={"123456":"./web-app","789012":"./api-server"}
+```
+
+In this setup:
+- Channel `123456` works in `/home/user/default-project/web-app`
+- Channel `789012` works in `/home/user/default-project/api-server`
+- All other channels work in `/home/user/default-project`
+
+**Startup logging:**
+
+The bot will show configured mappings on startup:
+```
+🗺️  Channel mappings:
+   1234567890123456789 → /path/to/project1
+   9876543210987654321 → /path/to/project2
+```
 
 ### Permissions
 
@@ -278,7 +332,9 @@ The bot has access to these Claude Code tools:
 
 To restrict tools, modify the `allowedTools` array in `src/agent/manager.ts`.
 
-### Channel Restriction
+### Channel Restriction (ALLOWED_CHANNEL_ID)
+
+**Note:** This setting is only used when `CHANNEL_MAPPINGS` is not configured. If you're using channel mappings, the bot automatically restricts itself to only the mapped channels.
 
 You can restrict the bot to only respond in a specific Discord channel using the `ALLOWED_CHANNEL_ID` environment variable.
 
@@ -295,9 +351,10 @@ You can restrict the bot to only respond in a specific Discord channel using the
 
 **Behavior:**
 
-- **If set**: The bot will only respond to `/claude` commands in that specific channel
-  - Commands from other channels will receive an ephemeral error message: "❌ This bot is restricted to a specific channel."
-- **If not set or empty**: The bot will respond to `/claude` commands in all channels (default)
+- **If `CHANNEL_MAPPINGS` is set**: This setting is ignored (use channel mappings for access control)
+- **If set (and no mappings)**: The bot will only respond to `/claude` commands in that specific channel
+  - Commands from other channels will receive an ephemeral error message: "❌ This bot is not configured for this channel."
+- **If not set (and no mappings)**: The bot will respond to `/claude` commands in all channels (default)
 
 **Example use cases:**
 
@@ -305,15 +362,11 @@ You can restrict the bot to only respond in a specific Discord channel using the
 - Prevent accidental usage in public channels
 - Restrict access to specific team channels
 
-The bot will log the restriction on startup:
-```
-🔒 Allowed channel: 1234567890123456789 (restricted)
-```
+**Which should I use?**
 
-Or if unrestricted:
-```
-🌐 Allowed channel: All channels
-```
+- Use `CHANNEL_MAPPINGS` if you want different channels to work on different projects
+- Use `ALLOWED_CHANNEL_ID` if you want all channels to use the same working directory but restrict access to one channel
+- Leave both empty to allow all channels with the default working directory
 
 ## Project Structure
 

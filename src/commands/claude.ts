@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
-import { config } from '../utils/config.js';
+import { getWorkingPathForChannel, isChannelAllowed } from '../utils/config.js';
 import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
 
 // Define the /claude command structure
@@ -41,9 +41,9 @@ export async function handleClaudeCommand(
   const channelId = interaction.channelId;
 
   // Check if the command is from an allowed channel
-  if (config.allowedChannelId && channelId !== config.allowedChannelId) {
+  if (!isChannelAllowed(channelId)) {
     await interaction.reply({
-      content: '❌ This bot is restricted to a specific channel.',
+      content: '❌ This bot is not configured for this channel.',
       ephemeral: true,
     });
     return;
@@ -69,6 +69,9 @@ export async function handleClaudeCommand(
       .setTimestamp();
 
     await interaction.editReply({ embeds: [initialEmbed] });
+
+    // Get the working path for this channel
+    const workingPath = getWorkingPathForChannel(channelId);
 
     // Execute the prompt with streaming updates (starts fresh - no session resumption)
     await executeClaudePrompt(
@@ -110,7 +113,8 @@ export async function handleClaudeCommand(
           // Handle Discord API errors (rate limits, etc.)
           console.error('Failed to update Discord message:', discordError);
         }
-      }
+      },
+      workingPath
     );
 
     // If no result was sent, ensure we have a completion message
@@ -151,9 +155,9 @@ export async function handleClaudeContinueCommand(
   const channelId = interaction.channelId;
 
   // Check if the command is from an allowed channel
-  if (config.allowedChannelId && channelId !== config.allowedChannelId) {
+  if (!isChannelAllowed(channelId)) {
     await interaction.reply({
-      content: '❌ This bot is restricted to a specific channel.',
+      content: '❌ This bot is not configured for this channel.',
       ephemeral: true,
     });
     return;
@@ -179,6 +183,9 @@ export async function handleClaudeContinueCommand(
       .setTimestamp();
 
     await interaction.editReply({ embeds: [initialEmbed] });
+
+    // Get the working path for this channel
+    const workingPath = getWorkingPathForChannel(channelId);
 
     // Execute the prompt with the existing session ID
     await executeClaudePrompt(
@@ -221,6 +228,7 @@ export async function handleClaudeContinueCommand(
           console.error('Failed to update Discord message:', discordError);
         }
       },
+      workingPath,
       resumeSessionId // Pass the session ID to resume
     );
 

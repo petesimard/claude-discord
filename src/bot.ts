@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder } from 'discord.js';
-import { config } from './utils/config.js';
+import { config, getWorkingPathForChannel, isChannelAllowed } from './utils/config.js';
 import { handleClaudeCommand, handleClaudeContinueCommand, createContinueButton, createResultEmbed, createErrorEmbed } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
@@ -12,11 +12,48 @@ export const client = new Client({
   ],
 });
 
-// Ready event - bot is online and ready
-client.once(Events.ClientReady, (readyClient) => {
+// ClientReady event - bot is online and ready
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot is ready! Logged in as ${readyClient.user.tag}`);
   console.log(`📁 Working directory: ${config.workingPath}`);
   console.log(`🤖 Claude Code agent is ready to receive commands`);
+
+  // Send welcome message to allowed channels if configured
+  const channelsToNotify: string[] = [];
+
+  if (config.channelMappings.size > 0) {
+    // If channel mappings are set, notify all mapped channels
+    channelsToNotify.push(...config.channelMappings.keys());
+  } else if (config.allowedChannelId) {
+    // If only ALLOWED_CHANNEL_ID is set, notify that channel
+    channelsToNotify.push(config.allowedChannelId);
+  }
+
+  // Send welcome message to each allowed channel
+  for (const channelId of channelsToNotify) {
+    try {
+      const channel = await readyClient.channels.fetch(channelId);
+      if (channel?.isTextBased() && 'send' in channel) {
+        const workingDir = getWorkingPathForChannel(channelId);
+        const embed = new EmbedBuilder()
+          .setColor(0x00ff00) // Green
+          .setTitle('🤖 Claude Code Bot Online')
+          .setDescription('I\'m ready to help you with your code!')
+          .addFields(
+            { name: '📁 Working Directory', value: `\`${workingDir}\``, inline: false },
+            { name: '💬 Commands', value: '`/claude [prompt]` - Start a new conversation\n`/claude-continue [session-id] [prompt]` - Continue a conversation', inline: false },
+            { name: '✨ Features', value: '• Interactive Continue buttons\n• Auto-detect Git/SVN with commit buttons\n• Live status updates\n• Session-based conversations', inline: false }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+        console.log(`📨 Sent welcome message to channel ${channelId}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️  Could not send welcome message to channel ${channelId}:`, error instanceof Error ? error.message : error);
+    }
+  }
 });
 
 // Handle interactions (slash commands, buttons, modals)
@@ -65,12 +102,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const channelId = interaction.channelId;
 
       // Check if the command is from an allowed channel
-      if (config.allowedChannelId && channelId !== config.allowedChannelId) {
+      if (!isChannelAllowed(channelId)) {
         await interaction.editReply({
-          content: '❌ This bot is restricted to a specific channel.',
+          content: '❌ This bot is not configured for this channel.',
         });
         return;
       }
+
+      // Get the working path for this channel
+      const workingPath = getWorkingPathForChannel(channelId);
 
       const startTime = Date.now();
 
@@ -88,7 +128,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (vcsType === 'git') {
           // Git workflow
-          statusResult = await execAsync('git status --porcelain', { cwd: config.workingPath });
+          statusResult = await execAsync('git status --porcelain', { cwd: workingPath });
 
           if (!statusResult.stdout.trim()) {
             // No changes to commit
@@ -127,13 +167,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.editReply(`📝 Committing changes to Git...\n💬 Message: "${commitMessage}"`);
 
           // Add all changes and commit
-          await execAsync('git add -A', { cwd: config.workingPath });
+          await execAsync('git add -A', { cwd: workingPath });
           commitResult = await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"`, {
-            cwd: config.workingPath
+            cwd: workingPath
           });
         } else {
           // SVN workflow
-          statusResult = await execAsync('svn status', { cwd: config.workingPath });
+          statusResult = await execAsync('svn status', { cwd: workingPath });
 
           if (!statusResult.stdout.trim()) {
             // No changes to commit
@@ -173,7 +213,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           // Perform the commit
           commitResult = await execAsync(`svn commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
-            cwd: config.workingPath
+            cwd: workingPath
           });
         }
 
@@ -231,9 +271,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const channelId = interaction.channelId;
 
       // Check if the command is from an allowed channel
-      if (config.allowedChannelId && channelId !== config.allowedChannelId) {
+      if (!isChannelAllowed(channelId || '')) {
         await interaction.editReply({
-          content: '❌ This bot is restricted to a specific channel.',
+          content: '❌ This bot is not configured for this channel.',
         });
         return;
       }
@@ -255,6 +295,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setTimestamp();
 
         await interaction.editReply({ embeds: [initialEmbed] });
+
+        // Get the working path for this channel
+        const workingPath = getWorkingPathForChannel(channelId || '');
 
         // Execute the prompt with the existing session ID
         await executeClaudePrompt(
@@ -297,6 +340,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               console.error('Failed to update Discord message:', discordError);
             }
           },
+          workingPath,
           sessionId // Pass the session ID to resume
         );
 

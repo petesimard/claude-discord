@@ -1,4 +1,4 @@
-import { REST, Routes } from 'discord.js';
+import { REST, Routes, Events } from 'discord.js';
 import { config } from './utils/config.js';
 import { startBot, client } from './bot.js';
 import { claudeCommand, claudeContinueCommand } from './commands/claude.js';
@@ -45,13 +45,20 @@ async function main(): Promise<void> {
   try {
     // Validate configuration
     console.log('Configuration:');
-    console.log(`  📁 Working directory: ${config.workingPath}`);
+    console.log(`  📁 Default working directory: ${config.workingPath}`);
     console.log(`  🔑 Discord token: ${config.discordToken.substring(0, 20)}...`);
     console.log(`  🔑 Anthropic API key: ${config.anthropicApiKey.substring(0, 20)}...`);
-    if (config.allowedChannelId) {
+
+    // Channel access control
+    if (config.channelMappings.size > 0) {
+      console.log(`  🗺️  Channel mappings (bot restricted to these channels):`);
+      for (const [channelId, path] of config.channelMappings.entries()) {
+        console.log(`     ${channelId} → ${path}`);
+      }
+    } else if (config.allowedChannelId) {
       console.log(`  🔒 Allowed channel: ${config.allowedChannelId} (restricted)`);
     } else {
-      console.log(`  🌐 Allowed channel: All channels`);
+      console.log(`  🌐 Allowed channels: All channels`);
     }
     console.log('');
 
@@ -60,7 +67,7 @@ async function main(): Promise<void> {
 
     // Wait for the client to be ready before registering commands
     await new Promise<void>((resolve) => {
-      client.once('ready', () => resolve());
+      client.once(Events.ClientReady, () => resolve());
     });
 
     // Register slash commands
