@@ -35,7 +35,14 @@ export async function executeClaudePrompt(
     // Check if the working directory exists
     const fs = await import('fs');
     if (!fs.existsSync(workingPath)) {
-      throw new Error(`Working directory does not exist: ${workingPath}\n\nPlease create the directory or update WORKING_DIR in your .env file.`);
+      throw new Error(`Working directory does not exist: ${workingPath}\n\nPlease create the directory or update your CHANNEL_MAPPINGS in the .env file.`);
+    }
+
+    // Check if directory is readable
+    try {
+      fs.accessSync(workingPath, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (error) {
+      throw new Error(`No read/write permissions for working directory: ${workingPath}\n\nPlease check directory permissions.`);
     }
 
     // Change to the configured working directory
@@ -152,10 +159,29 @@ export async function executeClaudePrompt(
     // Handle any errors from the agent execution
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Agent] Error:', errorMessage);
+    console.error('[Agent] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+
+    // Provide helpful error messages for common issues
+    let userMessage = `Failed to execute: ${errorMessage}`;
+
+    if (errorMessage.includes('process exited with code 1')) {
+      userMessage =
+        '❌ Claude Code agent failed to start.\n\n' +
+        'Common causes:\n' +
+        '• **API Key Issue**: Invalid or insufficient credits\n' +
+        '  → Check your ANTHROPIC_API_KEY in .env\n' +
+        '  → Verify credits at https://console.anthropic.com/\n\n' +
+        '• **Claude Code CLI Issue**: Not installed or not in PATH\n' +
+        '  → Verify installation: `claude --version`\n' +
+        '  → Reinstall if needed: https://claude.ai/install.sh\n\n' +
+        '• **Directory Issue**: Permission or path problems\n' +
+        `  → Check directory exists and is writable: ${workingPath}\n\n` +
+        'Run the bot with more verbose logging to see detailed errors.';
+    }
 
     await onMessage({
       type: 'error',
-      content: `Failed to execute: ${errorMessage}`
+      content: userMessage
     });
     throw error;
   } finally {
