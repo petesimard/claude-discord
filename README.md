@@ -366,9 +366,16 @@ claude-discord/
 
 ### Agent SDK errors
 
-- Verify Claude Code is installed: `claude --version`
-- Check that your `ANTHROPIC_API_KEY` is valid
-- Ensure the `WORKING_DIR` directory exists and is accessible
+If the agent fails with "Claude Code process exited with code 1":
+
+1. **Enable DEBUG mode** for detailed error output:
+   - Add `DEBUG=1` to your `.env` file
+   - Restart the bot
+   - Try the command again and check the console logs
+
+2. **Verify Claude Code is installed**: `claude --version`
+3. **Check that your `ANTHROPIC_API_KEY` is valid**
+4. **Ensure the configured directories exist and are accessible**
 
 ### "Credit balance is too low" or billing errors
 

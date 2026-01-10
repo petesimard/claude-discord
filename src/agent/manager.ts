@@ -32,6 +32,11 @@ export async function executeClaudePrompt(
     console.log(`[Agent] Original working directory: ${originalCwd}`);
     console.log(`[Agent] Target working directory: ${workingPath}`);
 
+    // Log DEBUG mode status
+    if (process.env.DEBUG === '1') {
+      console.log('[Agent] 🐛 DEBUG mode is ENABLED - verbose output will be shown');
+    }
+
     // Verify API key is set
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
@@ -74,10 +79,11 @@ export async function executeClaudePrompt(
       ],
       permissionMode: 'bypassPermissions' as const,
       ...(resumeSessionId && { resume: resumeSessionId }),
-      // Explicitly pass API key via environment
+      // Explicitly pass API key and DEBUG flag via environment
       env: {
         ...process.env,
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+        DEBUG: process.env.DEBUG || '0'
       },
       // Enable debug logging to capture Claude CLI output
       onStderr: (data: string) => {
