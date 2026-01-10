@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, Text
 import { config } from './utils/config.js';
 import { handleClaudeCommand, handleClaudeContinueCommand, createContinueButton, createResultEmbed, createErrorEmbed } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
+import { VcsType } from './utils/vcs.js';
 
 // Create Discord client with necessary intents
 export const client = new Client({
@@ -53,7 +54,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.showModal(modal);
     } else if (interaction.customId.startsWith('commit_')) {
-      const sessionId = interaction.customId.replace('commit_', '');
+      // Extract session ID and VCS type from customId: commit_${sessionId}_${vcsType}
+      const parts = interaction.customId.split('_');
+      const vcsType = parts[parts.length - 1] as VcsType;
+      const sessionId = parts.slice(1, -1).join('_');
 
       // Defer the reply immediately
       await interaction.deferReply();
@@ -78,56 +82,108 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // Send initial status
         await interaction.editReply('⏳ Checking for changes...');
 
-        // Check SVN status first
-        const statusResult = await execAsync('svn status', { cwd: config.workingPath });
+        let statusResult;
+        let commitResult;
+        let commitMessage;
 
-        if (!statusResult.stdout.trim()) {
-          // No changes to commit
-          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-          const embed = new EmbedBuilder()
-            .setColor(0xffa500) // Orange
-            .setTitle('ℹ️ No Changes to Commit')
-            .setDescription('There are no uncommitted changes in the working directory.')
-            .addFields(
-              { name: '⏱️ Duration', value: `${duration}s`, inline: true }
-            )
-            .setFooter({ text: 'Claude Code Agent' })
-            .setTimestamp();
+        if (vcsType === 'git') {
+          // Git workflow
+          statusResult = await execAsync('git status --porcelain', { cwd: config.workingPath });
 
-          await interaction.editReply({ content: '', embeds: [embed] });
-          return;
+          if (!statusResult.stdout.trim()) {
+            // No changes to commit
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            const embed = new EmbedBuilder()
+              .setColor(0xffa500) // Orange
+              .setTitle('ℹ️ No Changes to Commit')
+              .setDescription('There are no uncommitted changes in the working directory.')
+              .addFields(
+                { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+              )
+              .setFooter({ text: 'Claude Code Agent' })
+              .setTimestamp();
+
+            await interaction.editReply({ content: '', embeds: [embed] });
+            return;
+          }
+
+          // Parse git status to generate commit message
+          const changes = statusResult.stdout.trim().split('\n');
+          const added = changes.filter(line => line.startsWith('A') || line.startsWith('??')).length;
+          const modified = changes.filter(line => line.startsWith('M') || line.startsWith(' M')).length;
+          const deleted = changes.filter(line => line.startsWith('D') || line.startsWith(' D')).length;
+
+          // Generate auto commit message
+          const parts = [];
+          if (added > 0) parts.push(`${added} file${added > 1 ? 's' : ''} added`);
+          if (modified > 0) parts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
+          if (deleted > 0) parts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
+
+          commitMessage = parts.length > 0
+            ? `Auto-commit: ${parts.join(', ')}`
+            : 'Auto-commit: Changes made via Claude Code';
+
+          // Update status
+          await interaction.editReply(`📝 Committing changes to Git...\n💬 Message: "${commitMessage}"`);
+
+          // Add all changes and commit
+          await execAsync('git add -A', { cwd: config.workingPath });
+          commitResult = await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"`, {
+            cwd: config.workingPath
+          });
+        } else {
+          // SVN workflow
+          statusResult = await execAsync('svn status', { cwd: config.workingPath });
+
+          if (!statusResult.stdout.trim()) {
+            // No changes to commit
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            const embed = new EmbedBuilder()
+              .setColor(0xffa500) // Orange
+              .setTitle('ℹ️ No Changes to Commit')
+              .setDescription('There are no uncommitted changes in the working directory.')
+              .addFields(
+                { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+              )
+              .setFooter({ text: 'Claude Code Agent' })
+              .setTimestamp();
+
+            await interaction.editReply({ content: '', embeds: [embed] });
+            return;
+          }
+
+          // Parse SVN status to generate commit message
+          const changes = statusResult.stdout.trim().split('\n');
+          const added = changes.filter(line => line.startsWith('A')).length;
+          const modified = changes.filter(line => line.startsWith('M')).length;
+          const deleted = changes.filter(line => line.startsWith('D')).length;
+
+          // Generate auto commit message
+          const parts = [];
+          if (added > 0) parts.push(`${added} file${added > 1 ? 's' : ''} added`);
+          if (modified > 0) parts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
+          if (deleted > 0) parts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
+
+          commitMessage = parts.length > 0
+            ? `Auto-commit: ${parts.join(', ')}`
+            : 'Auto-commit: Changes made via Claude Code';
+
+          // Update status
+          await interaction.editReply(`📝 Committing changes to SVN...\n💬 Message: "${commitMessage}"`);
+
+          // Perform the commit
+          commitResult = await execAsync(`svn commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+            cwd: config.workingPath
+          });
         }
-
-        // Parse SVN status to generate commit message
-        const changes = statusResult.stdout.trim().split('\n');
-        const added = changes.filter(line => line.startsWith('A')).length;
-        const modified = changes.filter(line => line.startsWith('M')).length;
-        const deleted = changes.filter(line => line.startsWith('D')).length;
-
-        // Generate auto commit message
-        const parts = [];
-        if (added > 0) parts.push(`${added} file${added > 1 ? 's' : ''} added`);
-        if (modified > 0) parts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
-        if (deleted > 0) parts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
-
-        const commitMessage = parts.length > 0
-          ? `Auto-commit: ${parts.join(', ')}`
-          : 'Auto-commit: Changes made via Claude Code';
-
-        // Update status
-        await interaction.editReply(`📝 Committing changes to SVN...\n💬 Message: "${commitMessage}"`);
-
-        // Perform the commit
-        const commitResult = await execAsync(`svn commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
-          cwd: config.workingPath
-        });
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
         // Create success embed
+        const vcsName = vcsType === 'git' ? 'Git' : 'SVN';
         const embed = new EmbedBuilder()
           .setColor(0x00ff00) // Green
-          .setTitle('✅ Changes Committed to SVN')
+          .setTitle(`✅ Changes Committed to ${vcsName}`)
           .setDescription('```\n' + (commitResult.stdout || commitResult.stderr || 'Commit successful').substring(0, 3900) + '\n```')
           .addFields(
             { name: '💬 Commit Message', value: commitMessage.substring(0, 1024), inline: false },
@@ -136,19 +192,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setFooter({ text: 'Claude Code Agent' })
           .setTimestamp();
 
-        const components = sessionId ? [createContinueButton(sessionId)] : [];
+        const components = sessionId ? [createContinueButton(sessionId, vcsType)] : [];
         await interaction.editReply({ content: '', embeds: [embed], components });
 
       } catch (error) {
         // Handle any errors during execution
-        console.error('Error committing to SVN:', error);
+        console.error('Error committing:', error);
 
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
+        const vcsName = vcsType === 'git' ? 'Git' : 'SVN';
         const embed = new EmbedBuilder()
           .setColor(0xff0000) // Red
-          .setTitle('❌ SVN Commit Failed')
+          .setTitle(`❌ ${vcsName} Commit Failed`)
           .setDescription('```\n' + errorMessage.substring(0, 3900) + '\n```')
           .addFields(
             { name: '⏱️ Duration', value: `${duration}s`, inline: true }
@@ -226,13 +283,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 hasResult = true;
                 const duration = ((Date.now() - startTime) / 1000).toFixed(1);
                 const embed = createResultEmbed(prompt, message.content, duration);
-                const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+                const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
                 await interaction.editReply({ content: '', embeds: [embed], components });
               } else if (message.type === 'error') {
                 // Error occurred - use embed
                 const duration = ((Date.now() - startTime) / 1000).toFixed(1);
                 const embed = createErrorEmbed(prompt, message.content, duration);
-                const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+                const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
                 await interaction.editReply({ content: '', embeds: [embed], components });
               }
             } catch (discordError) {

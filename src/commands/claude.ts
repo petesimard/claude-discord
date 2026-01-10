@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
 import { config } from '../utils/config.js';
+import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
 
 // Define the /claude command structure
 export const claudeCommand = new SlashCommandBuilder()
@@ -96,13 +97,13 @@ export async function handleClaudeCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createErrorEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           }
         } catch (discordError) {
@@ -206,13 +207,13 @@ export async function handleClaudeContinueCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createErrorEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId)] : [];
+            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           }
         } catch (discordError) {
@@ -251,22 +252,29 @@ export async function handleClaudeContinueCommand(
 }
 
 /**
- * Create a button for continuing the conversation
+ * Create buttons for continuing the conversation and optionally committing
  */
-export function createContinueButton(sessionId: string): ActionRowBuilder<ButtonBuilder> {
+export function createContinueButton(sessionId: string, vcsType: VcsType = 'none'): ActionRowBuilder<ButtonBuilder> {
   const continueButton = new ButtonBuilder()
     .setCustomId(`continue_${sessionId}`)
     .setLabel('Continue Conversation')
     .setStyle(ButtonStyle.Primary)
     .setEmoji('💬');
 
-  const commitButton = new ButtonBuilder()
-    .setCustomId(`commit_${sessionId}`)
-    .setLabel('Commit to SVN')
-    .setStyle(ButtonStyle.Success)
-    .setEmoji('✅');
+  const buttons = [continueButton];
 
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(continueButton, commitButton);
+  // Only add commit button if VCS is detected
+  if (vcsType !== 'none') {
+    const commitButton = new ButtonBuilder()
+      .setCustomId(`commit_${sessionId}_${vcsType}`)
+      .setLabel(getCommitButtonLabel(vcsType))
+      .setStyle(ButtonStyle.Success)
+      .setEmoji('✅');
+
+    buttons.push(commitButton);
+  }
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
 /**

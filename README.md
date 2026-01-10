@@ -6,7 +6,7 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 
 - 🤖 Execute Claude Code prompts via `/claude` slash command
 - 💬 **Interactive "Continue Conversation" buttons** - Click to continue any conversation with a modal popup
-- ✅ **"Commit to SVN" buttons** - Click to commit all changes with auto-generated messages
+- ✅ **Smart VCS commit buttons** - Auto-detects Git or SVN and shows the appropriate commit button
 - 🔗 Session-based conversation context - continue any conversation from any channel
 - 📊 **Live status embeds** - Watch the agent work in real-time with dynamic status updates
 - 🛠️ Full access to Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch)
@@ -165,17 +165,29 @@ You can also continue conversations manually using the session ID:
 /claude-continue abc123def456 now find all places that call it
 ```
 
-#### Committing Changes to SVN
+#### Committing Changes (Git or SVN)
 
-Each response also includes a **"✅ Commit to SVN"** button. Click it to commit all changes in the working directory with an auto-generated message:
+Each response includes a commit button **if Git or SVN is detected** in your working directory. The button label changes based on what's detected:
+- **"✅ Commit to Git"** - If `.git` directory is found
+- **"✅ Commit to SVN"** - If `.svn` directory is found
+- **No button** - If neither is detected
 
-1. Click the **"✅ Commit to SVN"** button on any response
+Click the button to commit all changes with an auto-generated message:
+
+1. Click the **"✅ Commit to Git/SVN"** button on any response
 2. The bot automatically commits all changes
 
-The bot will:
-- Check for uncommitted changes with `svn status`
+**For Git**, the bot will:
+- Check for uncommitted changes with `git status`
 - Generate a commit message based on the changes (e.g., "Auto-commit: 3 files modified, 1 file added")
-- Commit all changes with the auto-generated message
+- Run `git add -A` to stage all changes
+- Commit with the auto-generated message
+- Add "Co-Authored-By: Claude Sonnet 4.5" to the commit
+
+**For SVN**, the bot will:
+- Check for uncommitted changes with `svn status`
+- Generate a commit message based on the changes
+- Commit all changes with `svn commit`
 - Display the SVN output and confirmation
 
 ### How It Works

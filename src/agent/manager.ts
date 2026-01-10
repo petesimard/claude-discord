@@ -1,10 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../utils/config.js';
+import { detectVcs, VcsType } from '../utils/vcs.js';
 
 export interface AgentMessage {
   type: 'status' | 'result' | 'error';
   content: string;
   sessionId?: string;
+  vcsType?: VcsType;
 }
 
 export type MessageCallback = (message: AgentMessage) => Promise<void>;
@@ -38,6 +40,10 @@ export async function executeClaudePrompt(
     // Change to the configured working directory
     process.chdir(config.workingPath);
     console.log(`[Agent] Changed to working directory: ${process.cwd()}`);
+
+    // Detect VCS type
+    const vcsType = detectVcs(config.workingPath);
+    console.log(`[Agent] Detected VCS type: ${vcsType}`);
 
     // Configure the agent with all tools and bypass permissions
     const options = {
@@ -92,7 +98,8 @@ export async function executeClaudePrompt(
         await onMessage({
           type: 'result',
           content: result,
-          sessionId: sessionId
+          sessionId: sessionId,
+          vcsType: vcsType
         });
       }
 
@@ -108,13 +115,15 @@ export async function executeClaudePrompt(
           await onMessage({
             type: 'error',
             content: `❌ Billing Error: ${errorContent}\n\nYour Anthropic API key has insufficient credits. Please add credits at https://console.anthropic.com/`,
-            sessionId: sessionId
+            sessionId: sessionId,
+            vcsType: vcsType
           });
         } else {
           await onMessage({
             type: 'error',
             content: `Error: ${errorContent}`,
-            sessionId: sessionId
+            sessionId: sessionId,
+            vcsType: vcsType
           });
         }
       }
@@ -126,7 +135,8 @@ export async function executeClaudePrompt(
       await onMessage({
         type: 'result',
         content: 'Task completed.',
-        sessionId: sessionId
+        sessionId: sessionId,
+        vcsType: vcsType
       });
     }
 
