@@ -32,6 +32,12 @@ export async function executeClaudePrompt(
     console.log(`[Agent] Original working directory: ${originalCwd}`);
     console.log(`[Agent] Target working directory: ${workingPath}`);
 
+    // Verify API key is set
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
+    }
+    console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
+
     // Check if the working directory exists
     const fs = await import('fs');
     if (!fs.existsSync(workingPath)) {
@@ -68,6 +74,11 @@ export async function executeClaudePrompt(
       ],
       permissionMode: 'bypassPermissions' as const,
       ...(resumeSessionId && { resume: resumeSessionId }),
+      // Explicitly pass API key via environment
+      env: {
+        ...process.env,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY
+      },
       // Enable debug logging to capture Claude CLI output
       onStderr: (data: string) => {
         console.error('[Agent] Claude CLI stderr:', data);
