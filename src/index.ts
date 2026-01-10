@@ -45,20 +45,11 @@ async function main(): Promise<void> {
   try {
     // Validate configuration
     console.log('Configuration:');
-    console.log(`  📁 Default working directory: ${config.workingPath}`);
     console.log(`  🔑 Discord token: ${config.discordToken.substring(0, 20)}...`);
     console.log(`  🔑 Anthropic API key: ${config.anthropicApiKey.substring(0, 20)}...`);
-
-    // Channel access control
-    if (config.channelMappings.size > 0) {
-      console.log(`  🗺️  Channel mappings (bot restricted to these channels):`);
-      for (const [channelId, path] of config.channelMappings.entries()) {
-        console.log(`     ${channelId} → ${path}`);
-      }
-    } else if (config.allowedChannelId) {
-      console.log(`  🔒 Allowed channel: ${config.allowedChannelId} (restricted)`);
-    } else {
-      console.log(`  🌐 Allowed channels: All channels`);
+    console.log(`  🗺️  Channel mappings (${config.channelMappings.size} channel${config.channelMappings.size === 1 ? '' : 's'}):`);
+    for (const [channelId, settings] of config.channelMappings.entries()) {
+      console.log(`     ${channelId} → ${settings.path}`);
     }
     console.log('');
 

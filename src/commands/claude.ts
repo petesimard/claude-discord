@@ -72,6 +72,9 @@ export async function handleClaudeCommand(
 
     // Get the working path for this channel
     const workingPath = getWorkingPathForChannel(channelId);
+    if (!workingPath) {
+      throw new Error(`No working path configured for channel ${channelId}`);
+    }
 
     // Execute the prompt with streaming updates (starts fresh - no session resumption)
     await executeClaudePrompt(
@@ -186,6 +189,9 @@ export async function handleClaudeContinueCommand(
 
     // Get the working path for this channel
     const workingPath = getWorkingPathForChannel(channelId);
+    if (!workingPath) {
+      throw new Error(`No working path configured for channel ${channelId}`);
+    }
 
     // Execute the prompt with the existing session ID
     await executeClaudePrompt(

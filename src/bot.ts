@@ -15,19 +15,10 @@ export const client = new Client({
 // ClientReady event - bot is online and ready
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot is ready! Logged in as ${readyClient.user.tag}`);
-  console.log(`📁 Working directory: ${config.workingPath}`);
   console.log(`🤖 Claude Code agent is ready to receive commands`);
 
-  // Send welcome message to allowed channels if configured
-  const channelsToNotify: string[] = [];
-
-  if (config.channelMappings.size > 0) {
-    // If channel mappings are set, notify all mapped channels
-    channelsToNotify.push(...config.channelMappings.keys());
-  } else if (config.allowedChannelId) {
-    // If only ALLOWED_CHANNEL_ID is set, notify that channel
-    channelsToNotify.push(config.allowedChannelId);
-  }
+  // Send welcome message to all configured channels
+  const channelsToNotify = Array.from(config.channelMappings.keys());
 
   // Send welcome message to each allowed channel
   for (const channelId of channelsToNotify) {
@@ -35,6 +26,8 @@ client.once(Events.ClientReady, async (readyClient) => {
       const channel = await readyClient.channels.fetch(channelId);
       if (channel?.isTextBased() && 'send' in channel) {
         const workingDir = getWorkingPathForChannel(channelId);
+        if (!workingDir) continue;
+
         const embed = new EmbedBuilder()
           .setColor(0x00ff00) // Green
           .setTitle('🤖 Claude Code Bot Online')
@@ -111,6 +104,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // Get the working path for this channel
       const workingPath = getWorkingPathForChannel(channelId);
+      if (!workingPath) {
+        await interaction.editReply({
+          content: '❌ No working directory configured for this channel.',
+        });
+        return;
+      }
 
       const startTime = Date.now();
 
@@ -298,6 +297,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // Get the working path for this channel
         const workingPath = getWorkingPathForChannel(channelId || '');
+        if (!workingPath) {
+          await interaction.editReply({
+            content: '❌ No working directory configured for this channel.',
+          });
+          return;
+        }
 
         // Execute the prompt with the existing session ID
         await executeClaudePrompt(

@@ -3,12 +3,14 @@ import { config as dotenvConfig } from 'dotenv';
 // Load environment variables from .env file
 dotenvConfig();
 
+export interface ChannelSettings {
+  path: string;
+}
+
 export interface Config {
   discordToken: string;
-  workingPath: string;
   anthropicApiKey: string;
-  allowedChannelId?: string;
-  channelMappings: Map<string, string>;
+  channelMappings: Map<string, ChannelSettings>;
 }
 
 function validateEnvVar(name: string, value: string | undefined): string {
@@ -21,8 +23,8 @@ function validateEnvVar(name: string, value: string | undefined): string {
   return value;
 }
 
-function parseChannelMappings(mappingsJson?: string): Map<string, string> {
-  const mappings = new Map<string, string>();
+function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSettings> {
+  const mappings = new Map<string, ChannelSettings>();
 
   if (!mappingsJson || !mappingsJson.trim()) {
     return mappings;
@@ -31,9 +33,12 @@ function parseChannelMappings(mappingsJson?: string): Map<string, string> {
   try {
     const parsed = JSON.parse(mappingsJson);
     if (typeof parsed === 'object' && parsed !== null) {
-      for (const [channelId, path] of Object.entries(parsed)) {
-        if (typeof path === 'string') {
-          mappings.set(channelId, path);
+      for (const [channelId, settings] of Object.entries(parsed)) {
+        if (typeof settings === 'object' && settings !== null && 'path' in settings) {
+          const channelSettings = settings as { path: string };
+          if (typeof channelSettings.path === 'string') {
+            mappings.set(channelId, { path: channelSettings.path });
+          }
         }
       }
     }
@@ -45,46 +50,64 @@ function parseChannelMappings(mappingsJson?: string): Map<string, string> {
 }
 
 export function loadConfig(): Config {
-  const allowedChannelId = process.env.ALLOWED_CHANNEL_ID?.trim();
   const channelMappings = parseChannelMappings(process.env.CHANNEL_MAPPINGS);
+
+  if (channelMappings.size === 0) {
+    throw new Error(
+      '\n' +
+      '═══════════════════════════════════════════════════════════════════════\n' +
+      '  ❌ ERROR: No channel mappings configured!\n' +
+      '═══════════════════════════════════════════════════════════════════════\n' +
+      '\n' +
+      'The bot requires CHANNEL_MAPPINGS to be set in your .env file.\n' +
+      '\n' +
+      'How to configure:\n' +
+      '  1. Get your Discord channel ID:\n' +
+      '     • Enable Developer Mode in Discord (User Settings → Advanced)\n' +
+      '     • Right-click on a channel and select "Copy ID"\n' +
+      '\n' +
+      '  2. Add to your .env file:\n' +
+      '     CHANNEL_MAPPINGS={"YOUR_CHANNEL_ID":{"path":"/path/to/your/project"}}\n' +
+      '\n' +
+      'Example:\n' +
+      '  CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project"}}\n' +
+      '\n' +
+      'Multiple channels:\n' +
+      '  CHANNEL_MAPPINGS={"123":{"path":"/project1"},"456":{"path":"/project2"}}\n' +
+      '\n' +
+      '═══════════════════════════════════════════════════════════════════════\n'
+    );
+  }
 
   return {
     discordToken: validateEnvVar('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
-    workingPath: validateEnvVar('WORKING_DIR', process.env.WORKING_DIR),
     anthropicApiKey: validateEnvVar('ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY),
-    allowedChannelId: allowedChannelId || undefined,
     channelMappings,
   };
 }
 
 /**
  * Get the working path for a specific channel
- * Falls back to default working path if no mapping exists
+ * Returns undefined if channel is not configured
  */
-export function getWorkingPathForChannel(channelId: string): string {
-  const mapping = config.channelMappings.get(channelId);
-  return mapping || config.workingPath;
+export function getWorkingPathForChannel(channelId: string): string | undefined {
+  const settings = config.channelMappings.get(channelId);
+  return settings?.path;
 }
 
 /**
  * Check if a channel is allowed to use the bot
- * - If CHANNEL_MAPPINGS is set, only mapped channels are allowed
- * - Otherwise, if ALLOWED_CHANNEL_ID is set, only that channel is allowed
- * - Otherwise, all channels are allowed
+ * Only channels in CHANNEL_MAPPINGS are allowed
  */
 export function isChannelAllowed(channelId: string): boolean {
-  // If channel mappings are configured, restrict to only mapped channels
-  if (config.channelMappings.size > 0) {
-    return config.channelMappings.has(channelId);
-  }
+  return config.channelMappings.has(channelId);
+}
 
-  // Otherwise, use ALLOWED_CHANNEL_ID if set
-  if (config.allowedChannelId) {
-    return channelId === config.allowedChannelId;
-  }
-
-  // No restrictions - allow all channels
-  return true;
+/**
+ * Get all configured channel IDs
+ */
+export function getAllowedChannelIds(): string[] {
+  return Array.from(config.channelMappings.keys());
 }
 
 export const config = loadConfig();
