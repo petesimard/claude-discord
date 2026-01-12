@@ -387,7 +387,7 @@ export async function handleClaudeContinueCommand(
 }
 
 /**
- * Create action buttons (commit and/or merge)
+ * Create action buttons (commit, merge, and/or close worktree)
  */
 export function createActionButtons(
   sessionId: string,
@@ -406,7 +406,7 @@ export function createActionButtons(
     buttons.push(commitButton);
   }
 
-  // Add merge button if working in a worktree
+  // Add merge and close buttons if working in a worktree
   if (worktreeBranch && worktreeBranch.startsWith('worktree/')) {
     const mergeButton = new ButtonBuilder()
       .setCustomId(`merge_${sessionId}`)
@@ -414,6 +414,13 @@ export function createActionButtons(
       .setStyle(ButtonStyle.Primary)
       .setEmoji('🔀');
     buttons.push(mergeButton);
+
+    const closeButton = new ButtonBuilder()
+      .setCustomId(`close_worktree_${sessionId}`)
+      .setLabel('Close worktree')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🗑️');
+    buttons.push(closeButton);
   }
 
   if (buttons.length > 0) {

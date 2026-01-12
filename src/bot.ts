@@ -4,6 +4,7 @@ import { handleClaudeCommand, handleClaudeContinueCommand, createCommitButton, c
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
 import { getThreadSession } from './agent/sessions.js';
+import { removeWorktree } from './utils/worktree.js';
 
 // Create Discord client with necessary intents
 export const client = new Client({
@@ -392,6 +393,82 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const embed = new EmbedBuilder()
           .setColor(0xff0000) // Red
           .setTitle('❌ Merge Failed')
+          .setDescription('```\n' + errorMessage.substring(0, 3900) + '\n```')
+          .addFields(
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+      }
+    } else if (interaction.customId.startsWith('close_worktree_')) {
+      // Defer the reply immediately
+      await interaction.deferReply();
+
+      // Use unified permission checker
+      const permissions = getChannelPermissions(interaction.channel!);
+      if (!permissions) {
+        await interaction.editReply({
+          content: '❌ This bot is not configured for this channel.',
+        });
+        return;
+      }
+
+      const worktreePath = permissions.worktreePath;
+      const worktreeBranch = permissions.worktreeBranch;
+
+      if (!worktreePath || !worktreeBranch) {
+        await interaction.editReply({
+          content: '❌ No worktree information found for this session.',
+        });
+        return;
+      }
+
+      if (!worktreeBranch.startsWith('worktree/')) {
+        await interaction.editReply({
+          content: '❌ This session is not using a worktree branch.',
+        });
+        return;
+      }
+
+      const mainRepoPath = permissions.settings.path;
+      const startTime = Date.now();
+
+      try {
+        // Send initial status
+        await interaction.editReply('⏳ Closing worktree...');
+
+        // Remove the worktree (this also deletes the branch)
+        await removeWorktree(mainRepoPath, worktreePath);
+
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        // Create success embed
+        const embed = new EmbedBuilder()
+          .setColor(0x00ff00) // Green
+          .setTitle('✅ Worktree Closed')
+          .setDescription('The worktree has been removed and the branch has been deleted.')
+          .addFields(
+            { name: '🌳 Worktree', value: `\`${worktreePath}\``, inline: false },
+            { name: '🔀 Branch', value: `\`${worktreeBranch}\``, inline: true },
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+
+      } catch (error) {
+        // Handle any errors during execution
+        console.error('Error closing worktree:', error);
+
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        const embed = new EmbedBuilder()
+          .setColor(0xff0000) // Red
+          .setTitle('❌ Failed to Close Worktree')
           .setDescription('```\n' + errorMessage.substring(0, 3900) + '\n```')
           .addFields(
             { name: '⏱️ Duration', value: `${duration}s`, inline: true }
