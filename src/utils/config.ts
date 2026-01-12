@@ -8,6 +8,7 @@ export interface ChannelSettings {
   autoUpdate?: boolean; // Auto git pull before new conversations
   forumChannelId?: string; // Forum channel to create session threads in
   workTreeBase?: string; // Base directory for creating worktrees (defaults to ../)
+  branchUrl?: string; // URL template for branch links (use [branchId] as placeholder)
 }
 
 export interface Config {
@@ -43,6 +44,7 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
             autoUpdate?: boolean;
             forumChannelId?: string | number;
             workTreeBase?: string;
+            branchUrl?: string;
           };
           if (typeof channelSettings.path === 'string') {
             // Ensure forumChannelId is a string (Discord IDs must be strings to avoid truncation)
@@ -58,11 +60,18 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
               console.log(`[Config] Channel ${channelId}: workTreeBase = "${workTreeBase}"`);
             }
 
+            // Get branchUrl if set
+            const branchUrl = channelSettings.branchUrl || undefined;
+            if (branchUrl) {
+              console.log(`[Config] Channel ${channelId}: branchUrl = "${branchUrl}"`);
+            }
+
             mappings.set(channelId, {
               path: channelSettings.path,
               autoUpdate: channelSettings.autoUpdate === true,
               forumChannelId: forumChannelId,
-              workTreeBase: workTreeBase
+              workTreeBase: workTreeBase,
+              branchUrl: branchUrl
             });
           }
         }

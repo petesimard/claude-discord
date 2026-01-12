@@ -176,7 +176,7 @@ export async function handleClaudeCommand(
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
             const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
 
@@ -193,7 +193,7 @@ export async function handleClaudeCommand(
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
             const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
 
@@ -219,7 +219,7 @@ export async function handleClaudeCommand(
     // If no result was sent, ensure we have a completion message
     if (!hasResult) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      const embed = createResultEmbed(prompt, 'Task completed.', duration);
+      const embed = createResultEmbed(prompt, 'Task completed.', duration, result.worktreePath, result.worktreeBranch, channelSettings.branchUrl);
 
       if (thread && statusMessage) {
         await statusMessage.edit({ embeds: [embed] });
@@ -241,7 +241,10 @@ export async function handleClaudeCommand(
       const embed = createErrorEmbed(
         prompt,
         `${errorMessage}\n\nPlease check the bot logs for more details.`,
-        duration
+        duration,
+        undefined,
+        undefined,
+        channelSettings.branchUrl
       );
 
       if (thread && statusMessage) {
@@ -281,6 +284,15 @@ export async function handleClaudeContinueCommand(
   let hasResult = false;
   const startTime = Date.now();
 
+  // Get the channel settings (before try block so it's accessible in catch)
+  const channelSettings = getChannelSettings(channelId);
+  if (!channelSettings) {
+    await interaction.editReply({
+      content: '❌ No settings configured for this channel.',
+    });
+    return;
+  }
+
   try {
     // Send initial status embed
     const initialEmbed = new EmbedBuilder()
@@ -294,12 +306,6 @@ export async function handleClaudeContinueCommand(
       .setTimestamp();
 
     await interaction.editReply({ embeds: [initialEmbed] });
-
-    // Get the channel settings
-    const channelSettings = getChannelSettings(channelId);
-    if (!channelSettings) {
-      throw new Error(`No settings configured for channel ${channelId}`);
-    }
 
     // Execute the prompt with the existing session ID
     await executeClaudePrompt(
@@ -327,14 +333,14 @@ export async function handleClaudeContinueCommand(
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
             const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
             const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
@@ -352,7 +358,7 @@ export async function handleClaudeContinueCommand(
     // If no result was sent, ensure we have a completion message
     if (!hasResult) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      const embed = createResultEmbed(prompt, 'Task completed.', duration);
+      const embed = createResultEmbed(prompt, 'Task completed.', duration, undefined, undefined, channelSettings.branchUrl);
       await interaction.editReply({ content: '', embeds: [embed] });
     }
   } catch (error) {
@@ -367,7 +373,10 @@ export async function handleClaudeContinueCommand(
       const embed = createErrorEmbed(
         prompt,
         `${errorMessage}\n\nPlease check the bot logs for more details.`,
-        duration
+        duration,
+        undefined,
+        undefined,
+        channelSettings.branchUrl
       );
       await interaction.editReply({ content: '', embeds: [embed] });
     } catch (discordError) {
@@ -447,6 +456,24 @@ export function formatResult(content: string): string {
 }
 
 /**
+ * Extract branch ID from worktree branch name
+ * Example: worktree/my-project-1234567-abc -> 1234567-abc
+ */
+function extractBranchId(worktreeBranch: string): string | undefined {
+  if (!worktreeBranch.startsWith('worktree/')) {
+    return undefined;
+  }
+
+  // Remove "worktree/" prefix
+  const withoutPrefix = worktreeBranch.substring('worktree/'.length);
+
+  // Find the session ID part (everything after the first '-' that's followed by a timestamp-like number)
+  // Format: <repo-name>-<session-id>, e.g., my-project-1234567-abc
+  const match = withoutPrefix.match(/^[^-]+-(.+)$/);
+  return match ? match[1] : undefined;
+}
+
+/**
  * Create a success result embed
  */
 export function createResultEmbed(
@@ -454,7 +481,8 @@ export function createResultEmbed(
   result: string,
   duration: string,
   worktreePath?: string,
-  worktreeBranch?: string
+  worktreeBranch?: string,
+  branchUrl?: string
 ): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0x00ff00) // Green
@@ -471,6 +499,17 @@ export function createResultEmbed(
       { name: '🌳 Worktree', value: `\`${worktreePath}\``, inline: false },
       { name: '🔀 Branch', value: `\`${worktreeBranch}\``, inline: true }
     );
+
+    // Add branch URL if branchUrl template is provided
+    if (branchUrl) {
+      const branchId = extractBranchId(worktreeBranch);
+      if (branchId) {
+        const fullUrl = branchUrl.replace('[branchId]', branchId);
+        embed.addFields(
+          { name: '🔗 Branch URL', value: fullUrl, inline: true }
+        );
+      }
+    }
   }
 
   embed.setFooter({ text: 'Claude Code Agent' })
@@ -487,7 +526,8 @@ export function createErrorEmbed(
   error: string,
   duration: string,
   worktreePath?: string,
-  worktreeBranch?: string
+  worktreeBranch?: string,
+  branchUrl?: string
 ): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0xff0000) // Red
@@ -504,6 +544,17 @@ export function createErrorEmbed(
       { name: '🌳 Worktree', value: `\`${worktreePath}\``, inline: false },
       { name: '🔀 Branch', value: `\`${worktreeBranch}\``, inline: true }
     );
+
+    // Add branch URL if branchUrl template is provided
+    if (branchUrl) {
+      const branchId = extractBranchId(worktreeBranch);
+      if (branchId) {
+        const fullUrl = branchUrl.replace('[branchId]', branchId);
+        embed.addFields(
+          { name: '🔗 Branch URL', value: fullUrl, inline: true }
+        );
+      }
+    }
   }
 
   embed.setFooter({ text: 'Claude Code Agent' })

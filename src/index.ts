@@ -45,8 +45,8 @@ async function main(): Promise<void> {
   try {
     // Validate configuration
     console.log('Configuration:');
-    console.log(`  🔑 Discord token: ${config.discordToken.substring(0, 20)}...`);
-    console.log(`  🔑 Anthropic API key: ${config.anthropicApiKey.substring(0, 20)}...`);
+    console.log(`  🔑 Discord token: ${config.discordToken.substring(0, 10)}...`);
+    console.log(`  🔑 Anthropic API key: ${config.anthropicApiKey.substring(0, 16)}...`);
     console.log(`  🗺️  Channel mappings (${config.channelMappings.size} channel${config.channelMappings.size === 1 ? '' : 's'}):`);
     for (const [channelId, settings] of config.channelMappings.entries()) {
       console.log(`     ${channelId} → ${settings.path}`);

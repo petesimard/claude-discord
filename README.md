@@ -275,6 +275,8 @@ Each channel's settings object supports:
 - `path`: (Required) The working directory for this channel where Claude Code will execute commands and access files
 - `autoUpdate`: (Optional) Automatically run `git pull` before starting new conversations (default: `false`)
 - `forumChannelId`: (Optional) Forum channel ID where session threads will be created. Get this by right-clicking a forum channel and selecting "Copy ID"
+- `workTreeBase`: (Optional) Base directory for creating Git worktrees (see Git Worktrees section below)
+- `branchUrl`: (Optional) URL template for branch preview links. Use `[branchId]` as a placeholder that will be replaced with the actual branch ID. Example: `"https://[branchId].preview.mysite.com"`
 
 **Example Configuration:**
 
@@ -288,8 +290,11 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","autoUpdate":true
 # Channel with worktrees enabled for parallel conversations
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../"}}
 
-# Full example with all features: forum threads, auto-update, and worktrees
-CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"forumChannelId":"9999999999","workTreeBase":"../"},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
+# Channel with worktrees and branch preview URLs
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../","branchUrl":"https://[branchId].preview.mysite.com"}}
+
+# Full example with all features: forum threads, auto-update, worktrees, and branch URLs
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"forumChannelId":"9999999999","workTreeBase":"../","branchUrl":"https://[branchId].example.com"},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
 ```
 
 **Behavior:**

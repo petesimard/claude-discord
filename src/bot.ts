@@ -454,14 +454,14 @@ client.on(Events.MessageCreate, async (message) => {
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch);
+            const embed = createResultEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch, permissions.settings.branchUrl);
             const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
             await statusMessage.edit({ embeds: [embed], components });
           } else if (agentMessage.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch);
+            const embed = createErrorEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch, permissions.settings.branchUrl);
             const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
             const components = actionButtons ? [actionButtons] : [];
             await statusMessage.edit({ embeds: [embed], components });
@@ -481,7 +481,7 @@ client.on(Events.MessageCreate, async (message) => {
     // If no result was sent, ensure we have a completion message
     if (!hasResult) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      const embed = createResultEmbed(prompt, 'Task completed.', duration);
+      const embed = createResultEmbed(prompt, 'Task completed.', duration, undefined, undefined, permissions.settings.branchUrl);
       await statusMessage.edit({ embeds: [embed] });
     }
   } catch (error) {
@@ -496,7 +496,10 @@ client.on(Events.MessageCreate, async (message) => {
       const embed = createErrorEmbed(
         prompt,
         `${errorMessage}\n\nPlease check the bot logs for more details.`,
-        duration
+        duration,
+        undefined,
+        undefined,
+        permissions.settings.branchUrl
       );
       await message.reply({ embeds: [embed] });
     } catch (discordError) {
