@@ -72,6 +72,67 @@ function getChannelPermissions(channel: Channel): {
   }
 }
 
+/**
+ * Commits changes in the working directory to Git.
+ * @param workingPath The path to the working directory
+ * @param updateStatus Optional callback to update status messages (for merge flow)
+ * @returns Promise that resolves to true if commit was successful or no changes, false on error
+ */
+async function commitChanges(
+  workingPath: string,
+  updateStatus?: (message: string) => Promise<void>
+): Promise<boolean> {
+  const statusUpdate = updateStatus || (async () => { });
+
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    // Send initial status
+    await statusUpdate('⏳ Checking for changes...');
+
+    // Git workflow
+    const statusResult = await execAsync('git status --porcelain', { cwd: workingPath });
+
+    if (!statusResult.stdout.trim()) {
+      // No changes to commit
+      return true; // Success - no changes is not an error
+    }
+
+    // Parse git status to generate commit message
+    const changes = statusResult.stdout.trim().split('\n');
+    const added = changes.filter(line => line.startsWith('A') || line.startsWith('??')).length;
+    const modified = changes.filter(line => line.startsWith('M') || line.startsWith(' M')).length;
+    const deleted = changes.filter(line => line.startsWith('D') || line.startsWith(' D')).length;
+
+    // Generate auto commit message
+    const messageParts = [];
+    if (added > 0) messageParts.push(`${added} file${added > 1 ? 's' : ''} added`);
+    if (modified > 0) messageParts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
+    if (deleted > 0) messageParts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
+
+    const commitMessage = messageParts.length > 0
+      ? `Auto-commit: ${messageParts.join(', ')}`
+      : 'Auto-commit: Changes made via Claude Code';
+
+    // Update status
+    await statusUpdate(`📝 Committing changes to Git...\n💬 Message: "${commitMessage}"`);
+
+    // Add all changes and commit
+    await execAsync('git add -A', { cwd: workingPath });
+    await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"`, {
+      cwd: workingPath
+    });
+
+    return true; // Success
+  } catch (error) {
+    // Handle any errors during execution
+    console.error('Error committing:', error);
+    return false; // Failure
+  }
+}
+
 // ClientReady event - bot is online and ready
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot is ready! Logged in as ${readyClient.user.tag}`);
@@ -145,66 +206,63 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const workingPath = permissions.workingPath;
       const startTime = Date.now();
 
-      try {
-        const { exec } = await import('child_process');
-        const { promisify } = await import('util');
-        const execAsync = promisify(exec);
+      // Create status update function for commitChanges
+      const updateStatus = async (message: string) => {
+        await interaction.editReply(message);
+      };
 
-        // Send initial status
-        await interaction.editReply('⏳ Checking for changes...');
+      // Check for changes first to determine commit message
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      const statusResult = await execAsync('git status --porcelain', { cwd: workingPath });
 
-        // Git workflow
-        const statusResult = await execAsync('git status --porcelain', { cwd: workingPath });
-
-        if (!statusResult.stdout.trim()) {
-          // No changes to commit
-          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-          const embed = new EmbedBuilder()
-            .setColor(0xffa500) // Orange
-            .setTitle('ℹ️ No Changes to Commit')
-            .setDescription('There are no uncommitted changes in the working directory.')
-            .addFields(
-              { name: '⏱️ Duration', value: `${duration}s`, inline: true }
-            )
-            .setFooter({ text: 'Claude Code Agent' })
-            .setTimestamp();
-
-          await interaction.editReply({ content: '', embeds: [embed] });
-          return;
-        }
-
-        // Parse git status to generate commit message
-        const changes = statusResult.stdout.trim().split('\n');
-        const added = changes.filter(line => line.startsWith('A') || line.startsWith('??')).length;
-        const modified = changes.filter(line => line.startsWith('M') || line.startsWith(' M')).length;
-        const deleted = changes.filter(line => line.startsWith('D') || line.startsWith(' D')).length;
-
-        // Generate auto commit message
-        const messageParts = [];
-        if (added > 0) messageParts.push(`${added} file${added > 1 ? 's' : ''} added`);
-        if (modified > 0) messageParts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
-        if (deleted > 0) messageParts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
-
-        const commitMessage = messageParts.length > 0
-          ? `Auto-commit: ${messageParts.join(', ')}`
-          : 'Auto-commit: Changes made via Claude Code';
-
-        // Update status
-        await interaction.editReply(`📝 Committing changes to Git...\n💬 Message: "${commitMessage}"`);
-
-        // Add all changes and commit
-        await execAsync('git add -A', { cwd: workingPath });
-        const commitResult = await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"`, {
-          cwd: workingPath
-        });
-
+      if (!statusResult.stdout.trim()) {
+        // No changes to commit
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        const embed = new EmbedBuilder()
+          .setColor(0xffa500) // Orange
+          .setTitle('ℹ️ No Changes to Commit')
+          .setDescription('There are no uncommitted changes in the working directory.')
+          .addFields(
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+        return;
+      }
+
+      // Parse git status to generate commit message
+      const changes = statusResult.stdout.trim().split('\n');
+      const added = changes.filter(line => line.startsWith('A') || line.startsWith('??')).length;
+      const modified = changes.filter(line => line.startsWith('M') || line.startsWith(' M')).length;
+      const deleted = changes.filter(line => line.startsWith('D') || line.startsWith(' D')).length;
+
+      // Generate auto commit message
+      const messageParts = [];
+      if (added > 0) messageParts.push(`${added} file${added > 1 ? 's' : ''} added`);
+      if (modified > 0) messageParts.push(`${modified} file${modified > 1 ? 's' : ''} modified`);
+      if (deleted > 0) messageParts.push(`${deleted} file${deleted > 1 ? 's' : ''} deleted`);
+
+      const commitMessage = messageParts.length > 0
+        ? `Auto-commit: ${messageParts.join(', ')}`
+        : 'Auto-commit: Changes made via Claude Code';
+
+      // Call commit function
+      const success = await commitChanges(workingPath, updateStatus);
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (success) {
+        // Get commit result for display
+        const commitResult = await execAsync('git log -1 --pretty=format:"%H%n%s%n%b"', { cwd: workingPath });
 
         // Create success embed
         const embed = new EmbedBuilder()
           .setColor(0x00ff00) // Green
           .setTitle('✅ Changes Committed to Git')
-          .setDescription('```\n' + (commitResult.stdout || commitResult.stderr || 'Commit successful').substring(0, 3900) + '\n```')
+          .setDescription('```\n' + (commitResult.stdout || 'Commit successful').substring(0, 3900) + '\n```')
           .addFields(
             { name: '💬 Commit Message', value: commitMessage.substring(0, 1024), inline: false },
             { name: '⏱️ Duration', value: `${duration}s`, inline: true }
@@ -215,14 +273,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const commitButton = sessionId ? createCommitButton(sessionId, vcsType) : undefined;
         const components = commitButton ? [commitButton] : [];
         await interaction.editReply({ content: '', embeds: [embed], components });
-
-      } catch (error) {
-        // Handle any errors during execution
-        console.error('Error committing:', error);
-
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-
+      } else {
+        // Handle error
+        const errorMessage = 'Failed to commit changes';
         const embed = new EmbedBuilder()
           .setColor(0xff0000) // Red
           .setTitle('❌ Git Commit Failed')
@@ -276,13 +329,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // Send initial status
         await interaction.editReply('⏳ Preparing to merge into main...');
 
-        // Check if worktree has uncommitted changes
+        // Check if worktree has uncommitted changes and commit them if needed
         const statusResult = await execAsync('git status --porcelain', { cwd: worktreePath });
         if (statusResult.stdout.trim()) {
-          await interaction.editReply({
-            content: '❌ The worktree has uncommitted changes. Please commit them first using the "Commit to Git" button.',
-          });
-          return;
+          await interaction.editReply('📝 Uncommitted changes detected. Committing changes before merge...');
+
+          // Create status update function for commitChanges
+          const updateStatus = async (message: string) => {
+            await interaction.editReply(message);
+          };
+
+          // Commit the changes
+          const commitSuccess = await commitChanges(worktreePath, updateStatus);
+          if (!commitSuccess) {
+            await interaction.editReply({
+              content: '❌ Failed to commit changes. Please commit them manually before merging.',
+            });
+            return;
+          }
         }
 
         await interaction.editReply('🔄 Switching to main branch...');
