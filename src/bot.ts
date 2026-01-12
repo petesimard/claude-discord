@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel } from 'discord.js';
 import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed, ChannelSettings } from './utils/config.js';
-import { handleClaudeCommand, handleClaudeContinueCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
+import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
 import { getThreadSession } from './agent/sessions.js';
@@ -180,6 +180,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleClaudeCommand(interaction);
     } else if (interaction.commandName === 'claude-continue') {
       await handleClaudeContinueCommand(interaction);
+    } else if (interaction.commandName === 'claude-quick') {
+      await handleClaudeQuickCommand(interaction);
     }
     return;
   }

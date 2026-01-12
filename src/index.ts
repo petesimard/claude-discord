@@ -1,7 +1,7 @@
 import { REST, Routes, Events } from 'discord.js';
 import { config } from './utils/config.js';
 import { startBot, client } from './bot.js';
-import { claudeCommand, claudeContinueCommand } from './commands/claude.js';
+import { claudeCommand, claudeContinueCommand, claudeQuickCommand } from './commands/claude.js';
 
 /**
  * Register slash commands with Discord
@@ -9,7 +9,8 @@ import { claudeCommand, claudeContinueCommand } from './commands/claude.js';
 async function registerCommands(): Promise<void> {
   const commands = [
     claudeCommand.toJSON(),
-    claudeContinueCommand.toJSON()
+    claudeContinueCommand.toJSON(),
+    claudeQuickCommand.toJSON()
   ];
 
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
@@ -69,6 +70,7 @@ async function main(): Promise<void> {
     console.log('💬 Commands:');
     console.log('   /claude [prompt] - Start a new conversation');
     console.log('   /claude-continue [session-id] [prompt] - Continue a previous conversation');
+    console.log('   /claude-quick [prompt] - Quick execution in main channel (no worktree/thread)');
   } catch (error) {
     console.error('❌ Failed to start bot:', error);
     process.exit(1);

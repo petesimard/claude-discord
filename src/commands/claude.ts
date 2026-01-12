@@ -33,6 +33,17 @@ export const claudeContinueCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
+// Define the /claude-quick command structure
+export const claudeQuickCommand = new SlashCommandBuilder()
+  .setName('claude-quick')
+  .setDescription('Execute a quick Claude Code prompt in the current channel (no worktree or thread)')
+  .addStringOption((option) =>
+    option
+      .setName('prompt')
+      .setDescription('The prompt to send to Claude Code')
+      .setRequired(true)
+  );
+
 /**
  * Handle the /claude slash command
  */
@@ -354,6 +365,137 @@ export async function handleClaudeContinueCommand(
       channelSettings.path,
       channelSettings,
       resumeSessionId // Pass the session ID to resume
+    );
+
+    // If no result was sent, ensure we have a completion message
+    if (!hasResult) {
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      const embed = createResultEmbed(prompt, 'Task completed.', duration, undefined, undefined, channelSettings.branchUrl);
+      await interaction.editReply({ content: '', embeds: [embed] });
+    }
+  } catch (error) {
+    // Handle any errors during execution
+    console.error('Error executing Claude prompt:', error);
+
+    const errorMessage =
+      error instanceof Error ? error.message : 'Unknown error occurred';
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    try {
+      const embed = createErrorEmbed(
+        prompt,
+        `${errorMessage}\n\nPlease check the bot logs for more details.`,
+        duration,
+        undefined,
+        undefined,
+        channelSettings.branchUrl
+      );
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (discordError) {
+      console.error('Failed to send error message to Discord:', discordError);
+    }
+  }
+}
+
+/**
+ * Handle the /claude-quick slash command
+ * Executes in the current channel without creating worktrees or threads
+ */
+export async function handleClaudeQuickCommand(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const prompt = interaction.options.getString('prompt', true);
+  const channelId = interaction.channelId;
+
+  // Check if the command is from an allowed channel
+  if (!isChannelAllowed(channelId)) {
+    await interaction.reply({
+      content: '❌ This bot is not configured for this channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Get the channel settings
+  const channelSettings = getChannelSettings(channelId);
+  if (!channelSettings) {
+    await interaction.reply({
+      content: '❌ No settings configured for this channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Defer the reply immediately since agent execution can take a while
+  await interaction.deferReply();
+
+  let lastStatus = '';
+  let hasResult = false;
+  const startTime = Date.now();
+
+  try {
+    // Send initial status embed
+    const initialEmbed = new EmbedBuilder()
+      .setColor(0x3498db) // Blue
+      .setTitle('⏳ Starting Claude Code Agent...')
+      .setDescription('Executing your request in the main repository...')
+      .addFields(
+        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
+      )
+      .setFooter({ text: 'Claude Code Agent' })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [initialEmbed] });
+
+    // Execute the prompt without worktree (use main repo path directly)
+    await executeClaudePrompt(
+      prompt,
+      async (message: AgentMessage) => {
+        try {
+          if (message.type === 'status') {
+            // Update status if it changed
+            if (message.content !== lastStatus) {
+              lastStatus = message.content;
+              const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+              const statusEmbed = new EmbedBuilder()
+                .setColor(0x3498db) // Blue
+                .setTitle(message.content)
+                .setDescription('Processing your request...')
+                .addFields(
+                  { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
+                  { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+                )
+                .setFooter({ text: 'Claude Code Agent' })
+                .setTimestamp();
+
+              await interaction.editReply({ embeds: [statusEmbed] });
+            }
+          } else if (message.type === 'result') {
+            // Final result - use embed
+            hasResult = true;
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            const embed = createResultEmbed(prompt, message.content, duration, undefined, undefined, channelSettings.branchUrl);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
+            await interaction.editReply({ content: '', embeds: [embed], components });
+          } else if (message.type === 'error') {
+            // Error occurred - use embed
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            const embed = createErrorEmbed(prompt, message.content, duration, undefined, undefined, channelSettings.branchUrl);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
+            await interaction.editReply({ content: '', embeds: [embed], components });
+          }
+        } catch (discordError) {
+          // Handle Discord API errors (rate limits, etc.)
+          console.error('Failed to update Discord message:', discordError);
+        }
+      },
+      channelSettings.path,
+      channelSettings,
+      undefined, // No session resumption
+      undefined, // No worktree path
+      undefined  // No worktree branch
     );
 
     // If no result was sent, ensure we have a completion message

@@ -147,6 +147,42 @@ Each `/claude` command starts a **fresh conversation** with no memory of previou
 /claude run the tests and fix any failures
 ```
 
+#### Quick Execution (No Worktree/Thread)
+
+For quick tasks that don't need isolation or conversation continuity, use `/claude-quick`:
+
+```
+/claude-quick [prompt]
+```
+
+This command:
+- ✅ Executes directly in the current channel
+- ✅ Uses the main repository (no worktree created)
+- ✅ No forum thread created
+- ✅ Faster for simple one-off tasks
+- ❌ Cannot continue the conversation with @mentions
+- ❌ No session isolation
+
+**When to use `/claude-quick`:**
+- Quick information queries
+- Single-file edits
+- Simple read-only operations
+- When you don't need conversation history
+
+**When to use `/claude`:**
+- Multi-step tasks
+- Feature development
+- When you need to continue the conversation
+- When you want isolated worktrees
+
+**Examples:**
+
+```
+/claude-quick what's the structure of this codebase?
+/claude-quick read config.ts and tell me what settings are available
+/claude-quick fix the typo in README.md line 45
+```
+
 #### Continuing a Conversation - @Mention the Bot in the Forum Thread
 
 When forum channels are configured, each conversation gets its own dedicated forum thread. To continue a conversation:
