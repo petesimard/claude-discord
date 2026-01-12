@@ -456,21 +456,13 @@ export function formatResult(content: string): string {
 }
 
 /**
- * Extract branch ID from worktree branch name
- * Example: worktree/my-project-1234567-abc -> 1234567-abc
+ * Extract branch ID from worktree path
+ * The branch ID is the full worktree directory name
+ * Example: /home/outwar-worktrees/outwar-com-1768240643512-q3om9o -> outwar-com-1768240643512-q3om9o
  */
-function extractBranchId(worktreeBranch: string): string | undefined {
-  if (!worktreeBranch.startsWith('worktree/')) {
-    return undefined;
-  }
-
-  // Remove "worktree/" prefix
-  const withoutPrefix = worktreeBranch.substring('worktree/'.length);
-
-  // Find the session ID part (everything after the first '-' that's followed by a timestamp-like number)
-  // Format: <repo-name>-<session-id>, e.g., my-project-1234567-abc
-  const match = withoutPrefix.match(/^[^-]+-(.+)$/);
-  return match ? match[1] : undefined;
+function extractBranchId(worktreePath: string): string {
+  const path = require('path');
+  return path.basename(worktreePath);
 }
 
 /**
@@ -502,13 +494,11 @@ export function createResultEmbed(
 
     // Add branch URL if branchUrl template is provided
     if (branchUrl) {
-      const branchId = extractBranchId(worktreeBranch);
-      if (branchId) {
-        const fullUrl = branchUrl.replace('[branchId]', branchId);
-        embed.addFields(
-          { name: '🔗 Branch URL', value: fullUrl, inline: true }
-        );
-      }
+      const branchId = extractBranchId(worktreePath);
+      const fullUrl = branchUrl.replace('[branchId]', branchId);
+      embed.addFields(
+        { name: '🔗 Branch URL', value: fullUrl, inline: true }
+      );
     }
   }
 
@@ -547,13 +537,11 @@ export function createErrorEmbed(
 
     // Add branch URL if branchUrl template is provided
     if (branchUrl) {
-      const branchId = extractBranchId(worktreeBranch);
-      if (branchId) {
-        const fullUrl = branchUrl.replace('[branchId]', branchId);
-        embed.addFields(
-          { name: '🔗 Branch URL', value: fullUrl, inline: true }
-        );
-      }
+      const branchId = extractBranchId(worktreePath);
+      const fullUrl = branchUrl.replace('[branchId]', branchId);
+      embed.addFields(
+        { name: '🔗 Branch URL', value: fullUrl, inline: true }
+      );
     }
   }
 

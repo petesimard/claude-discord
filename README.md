@@ -379,6 +379,51 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"/
 
 **Note:** The `path` setting still points to your main Git repository. The worktrees are created from this repository.
 
+### Branch Preview URLs
+
+When using worktrees, you can configure branch preview URLs to automatically generate clickable links to preview deployments or environments for each worktree branch.
+
+**How it works:**
+
+1. Set the `branchUrl` parameter in your channel settings with a URL template
+2. Use `[branchId]` as a placeholder in the URL
+3. The bot will replace `[branchId]` with the actual branch ID from the worktree
+4. A clickable "Branch URL" field will appear in all response embeds when working in a worktree
+
+**Branch ID Format:**
+
+The branch ID is the full worktree directory name. Repository folder names are automatically slugified (special characters replaced with hyphens). For example:
+- Repository: `/home/user/outwar.com`
+- Slugified: `outwar-com`
+- Session ID: `1768240643512-q3om9o`
+- Worktree directory: `/home/outwar-worktrees/outwar-com-1768240643512-q3om9o`
+- Branch ID (used in URL): `outwar-com-1768240643512-q3om9o`
+
+This full directory name is then substituted for `[branchId]` in your URL template.
+
+**Example Configurations:**
+
+```env
+# Subdomain-based preview (e.g., Vercel, Netlify)
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-app","workTreeBase":"../","branchUrl":"https://[branchId].preview.myapp.com"}}
+
+# Path-based preview
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-app","workTreeBase":"../","branchUrl":"https://preview.myapp.com/[branchId]"}}
+
+# Custom domain with port
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-app","workTreeBase":"../","branchUrl":"http://[branchId].dev.internal:3000"}}
+```
+
+**Result:**
+
+When a worktree is created for repository `outwar.com` with session ID `1768240643512-q3om9o`, and your `branchUrl` is set to `"https://[branchId].preview.myapp.com"`, the embed will show:
+
+```
+🔗 Branch URL: https://outwar-com-1768240643512-q3om9o.preview.myapp.com
+```
+
+The full worktree directory name (`outwar-com-1768240643512-q3om9o`) replaces `[branchId]` in the template. This link appears in all task completion and error embeds, making it easy to access preview deployments directly from Discord.
+
 ### Allowed Tools
 
 The bot has access to these Claude Code tools:

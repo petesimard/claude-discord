@@ -11,6 +11,18 @@ export interface WorktreeInfo {
 }
 
 /**
+ * Slugify a string by replacing non-alphanumeric characters with hyphens
+ * @param text The text to slugify
+ * @returns Slugified text (e.g., "outwar.com" -> "outwar-com")
+ */
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+    .replace(/^-+|-+$/g, '');     // Remove leading/trailing hyphens
+}
+
+/**
  * Create a new Git worktree for a conversation session
  * @param mainRepoPath The path to the main Git repository
  * @param workTreeBase The base directory for worktrees (defaults to ../)
@@ -22,11 +34,12 @@ export async function createWorktree(
   workTreeBase: string,
   sessionId: string
 ): Promise<WorktreeInfo> {
-  // Extract the base repo folder name
+  // Extract the base repo folder name and slugify it
   const repoFolderName = path.basename(mainRepoPath);
+  const slugifiedRepoName = slugify(repoFolderName);
 
-  // Generate a worktree directory name using the repo folder name
-  const worktreeName = `${repoFolderName}-${sessionId}`;
+  // Generate a worktree directory name using the slugified repo folder name
+  const worktreeName = `${slugifiedRepoName}-${sessionId}`;
   const worktreePath = path.resolve(workTreeBase, worktreeName);
 
   console.log(`[Worktree] Creating worktree at: ${worktreePath}`);
@@ -52,8 +65,8 @@ export async function createWorktree(
 
     console.log(`[Worktree] Base branch: ${baseBranch}`);
 
-    // Create a unique branch name for this worktree
-    const worktreeBranch = `worktree/${repoFolderName}-${sessionId}`;
+    // Create a unique branch name for this worktree (using slugified name)
+    const worktreeBranch = `worktree/${slugifiedRepoName}-${sessionId}`;
     console.log(`[Worktree] Creating branch: ${worktreeBranch}`);
 
     // Create the worktree with a new branch based on the current branch
@@ -147,14 +160,17 @@ export async function cleanupOldWorktrees(
     const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
     const now = Date.now();
 
+    // Slugify the repo folder name for matching
+    const slugifiedRepoName = repoFolderName ? slugify(repoFolderName) : undefined;
+
     for (const entry of entries) {
       // Only process directories
       if (!entry.isDirectory()) {
         continue;
       }
 
-      // If repoFolderName is specified, only clean worktrees matching that repo
-      if (repoFolderName && !entry.name.startsWith(`${repoFolderName}-`)) {
+      // If repoFolderName is specified, only clean worktrees matching that repo (using slugified name)
+      if (slugifiedRepoName && !entry.name.startsWith(`${slugifiedRepoName}-`)) {
         continue;
       }
 
