@@ -3,6 +3,7 @@ import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
 import { getChannelSettings, isChannelAllowed } from '../utils/config.js';
 import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
 import { setThreadSession } from '../agent/sessions.js';
+import * as path from 'path';
 
 // Define the /claude command structure
 export const claudeCommand = new SlashCommandBuilder()
@@ -461,7 +462,6 @@ export function formatResult(content: string): string {
  * Example: /home/outwar-worktrees/outwar-com-1768240643512-q3om9o -> outwar-com-1768240643512-q3om9o
  */
 function extractBranchId(worktreePath: string): string {
-  const path = require('path');
   return path.basename(worktreePath);
 }
 

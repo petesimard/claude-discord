@@ -316,8 +316,9 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"f
   - Allows multiple parallel conversations without conflicts
   - Set to `"../"` to create worktrees in the parent directory of your project
   - Or specify an absolute path like `"/tmp/worktrees"`
-  - Each worktree is named `<repo-folder-name>-<session-id>` (e.g., `my-project-abc123`)
-  - Each worktree gets a unique branch `worktree/<repo-folder-name>-<session-id>` based on your current branch
+  - Repository folder names are slugified (special characters replaced with hyphens)
+  - Each worktree is named `<slugified-repo-name>-<session-id>` (e.g., `outwar.com` → `outwar-com-abc123`)
+  - Each worktree gets a unique branch `worktree/<slugified-repo-name>-<session-id>` based on your current branch
   - When continuing a conversation (via @mention), the original worktree is reused
   - Old worktrees (>24 hours) and their branches are automatically cleaned up
 - Additional settings can be added per channel (e.g., allowed tools, permissions, model selection)
@@ -354,8 +355,9 @@ Git worktrees allow you to have multiple working directories for the same reposi
 
 1. When you start a new `/claude` conversation with `workTreeBase` configured, the bot:
    - Creates a new Git worktree in the specified base directory
-   - Names the worktree `<repo-folder-name>-<session-id>` (e.g., `my-project-abc123`)
-   - Creates a new branch `worktree/<repo-folder-name>-<session-id>` based on your current branch
+   - Slugifies the repository folder name (replaces special characters with hyphens)
+   - Names the worktree `<slugified-repo-name>-<session-id>` (e.g., `outwar.com` → `outwar-com-abc123`)
+   - Creates a new branch `worktree/<slugified-repo-name>-<session-id>` based on your current branch
    - Uses that worktree as the working directory for the entire conversation
 
 2. When you continue the conversation (via @mention in a forum thread):
