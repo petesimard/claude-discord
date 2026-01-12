@@ -1,7 +1,7 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { detectVcs, VcsType } from '../utils/vcs.js';
 import type { ChannelSettings } from '../utils/config.js';
-import { createWorktree } from '../utils/worktree.js';
+import { createWorktree, WorktreeInfo } from '../utils/worktree.js';
 import * as path from 'path';
 
 export interface AgentMessage {
@@ -10,6 +10,7 @@ export interface AgentMessage {
   sessionId?: string;
   vcsType?: VcsType;
   worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 export type MessageCallback = (message: AgentMessage) => Promise<void>;
@@ -17,6 +18,7 @@ export type MessageCallback = (message: AgentMessage) => Promise<void>;
 export interface ExecutionResult {
   sessionId: string;
   worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 /**
@@ -27,6 +29,7 @@ export interface ExecutionResult {
  * @param channelSettings The channel settings (for autoUpdate, etc.)
  * @param resumeSessionId Optional session ID to resume a previous conversation
  * @param existingWorktreePath Optional worktree path when resuming a session
+ * @param existingWorktreeBranch Optional worktree branch when resuming a session
  * @returns The execution result containing session ID and worktree path
  */
 export async function executeClaudePrompt(
@@ -35,12 +38,14 @@ export async function executeClaudePrompt(
   workingPath: string,
   channelSettings: ChannelSettings,
   resumeSessionId?: string,
-  existingWorktreePath?: string
+  existingWorktreePath?: string,
+  existingWorktreeBranch?: string
 ): Promise<ExecutionResult> {
   // Save the original working directory
   const originalCwd = process.cwd();
   let actualWorkingPath = workingPath;
-  let createdWorktreePath: string | undefined = undefined;
+  let createdWorktreeInfo: WorktreeInfo | undefined = undefined;
+  let resumedWorktreeInfo: WorktreeInfo | undefined = undefined;
 
   try {
     console.log(`[Agent] Executing prompt (session: ${resumeSessionId || 'new'})`);
@@ -65,14 +70,14 @@ export async function executeClaudePrompt(
           content: '🌳 Creating worktree for this session...'
         });
 
-        createdWorktreePath = await createWorktree(workingPath, workTreeBase, tempSessionId);
-        actualWorkingPath = createdWorktreePath;
+        createdWorktreeInfo = await createWorktree(workingPath, workTreeBase, tempSessionId);
+        actualWorkingPath = createdWorktreeInfo.path;
 
-        console.log(`[Agent] Using worktree: ${actualWorkingPath}`);
+        console.log(`[Agent] Using worktree: ${actualWorkingPath} on branch ${createdWorktreeInfo.branch}`);
 
         await onMessage({
           type: 'status',
-          content: '✅ Worktree created'
+          content: `✅ Worktree created on branch ${createdWorktreeInfo.branch}`
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -82,13 +87,17 @@ export async function executeClaudePrompt(
           content: '⚠️  Failed to create worktree, using main directory instead'
         });
         // Fall back to main directory
-        createdWorktreePath = undefined;
+        createdWorktreeInfo = undefined;
         actualWorkingPath = workingPath;
       }
-    } else if (existingWorktreePath) {
+    } else if (existingWorktreePath && existingWorktreeBranch) {
       // Resume a session with an existing worktree
-      console.log(`[Agent] Resuming with existing worktree: ${existingWorktreePath}`);
+      console.log(`[Agent] Resuming with existing worktree: ${existingWorktreePath} on branch ${existingWorktreeBranch}`);
       actualWorkingPath = existingWorktreePath;
+      resumedWorktreeInfo = {
+        path: existingWorktreePath,
+        branch: existingWorktreeBranch
+      };
     }
 
     console.log(`[Agent] Final working directory: ${actualWorkingPath}`);
@@ -166,6 +175,7 @@ export async function executeClaudePrompt(
     // Configure the agent with all tools and bypass permissions
     const options = {
       workingDirectory: actualWorkingPath,
+      settingSources: ["project" as SettingSource],
       allowedTools: [
         'Read',
         'Write',
@@ -198,12 +208,12 @@ export async function executeClaudePrompt(
     let hasResult = false;
     let hasError = false;
 
-    console.log('[Agent] Starting query with options:', JSON.stringify({
-      workingDirectory: options.workingDirectory,
-      allowedTools: options.allowedTools,
-      permissionMode: options.permissionMode,
-      resume: options.resume || 'none'
-    }));
+    // console.log('[Agent] Starting query with options:', JSON.stringify({
+    //   workingDirectory: options.workingDirectory,
+    //   allowedTools: options.allowedTools,
+    //   permissionMode: options.permissionMode,
+    //   resume: options.resume || 'none'
+    // }));
 
     // Execute the query and stream messages
     for await (const message of query({ prompt, options })) {
@@ -233,12 +243,14 @@ export async function executeClaudePrompt(
         const result = (message as any).result;
         hasResult = true;
         console.log(`[Agent] Got result: ${result?.substring(0, 100)}...`);
+        const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
         await onMessage({
           type: 'result',
           content: result,
           sessionId: sessionId,
           vcsType: vcsType,
-          worktreePath: createdWorktreePath
+          worktreePath: worktreeInfo?.path,
+          worktreeBranch: worktreeInfo?.branch
         });
       }
 
@@ -250,13 +262,15 @@ export async function executeClaudePrompt(
         console.log(`[Agent] Got error: ${error}`);
 
         // Check for billing errors
+        const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
         if (error === 'billing_error' || errorContent.includes('Credit balance is too low')) {
           await onMessage({
             type: 'error',
             content: `❌ Billing Error: ${errorContent}\n\nYour Anthropic API key has insufficient credits. Please add credits at https://console.anthropic.com/`,
             sessionId: sessionId,
             vcsType: vcsType,
-            worktreePath: createdWorktreePath
+            worktreePath: worktreeInfo?.path,
+            worktreeBranch: worktreeInfo?.branch
           });
         } else {
           await onMessage({
@@ -264,7 +278,8 @@ export async function executeClaudePrompt(
             content: `Error: ${errorContent}`,
             sessionId: sessionId,
             vcsType: vcsType,
-            worktreePath: createdWorktreePath
+            worktreePath: worktreeInfo?.path,
+            worktreeBranch: worktreeInfo?.branch
           });
         }
       }
@@ -273,23 +288,27 @@ export async function executeClaudePrompt(
     // Only send generic completion if we didn't get a result or error
     if (!hasResult && !hasError) {
       console.log('[Agent] No result received, sending generic completion');
+      const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
       await onMessage({
         type: 'result',
         content: 'Task completed.',
         sessionId: sessionId,
         vcsType: vcsType,
-        worktreePath: createdWorktreePath
+        worktreePath: worktreeInfo?.path,
+        worktreeBranch: worktreeInfo?.branch
       });
     }
 
-    // Return the session ID and worktree path for continuation
+    // Return the session ID and worktree info for continuation
     if (!sessionId) {
       throw new Error('No session ID was captured from agent execution');
     }
 
+    const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
     return {
       sessionId,
-      worktreePath: createdWorktreePath
+      worktreePath: worktreeInfo?.path,
+      worktreeBranch: worktreeInfo?.branch
     };
 
   } catch (error) {

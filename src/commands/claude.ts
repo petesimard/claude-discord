@@ -176,15 +176,15 @@ export async function handleClaudeCommand(
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, message.content, duration);
-            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
 
             if (thread && statusMessage) {
               await statusMessage.edit({ embeds: [embed], components });
-              // Store the thread -> session mapping with source channel and worktree path
+              // Store the thread -> session mapping with source channel and worktree info
               if (message.sessionId) {
-                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath);
+                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath, message.worktreeBranch);
                 console.log(`[Claude] Mapped thread ${thread.id} to session ${message.sessionId} (source: ${channelId})`);
               }
             } else {
@@ -193,15 +193,15 @@ export async function handleClaudeCommand(
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, message.content, duration);
-            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
 
             if (thread && statusMessage) {
               await statusMessage.edit({ embeds: [embed], components });
               // Store the thread -> session mapping even on error
               if (message.sessionId) {
-                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath);
+                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath, message.worktreeBranch);
               }
             } else {
               await interaction.editReply({ content: '', embeds: [embed], components });
@@ -224,7 +224,7 @@ export async function handleClaudeCommand(
       if (thread && statusMessage) {
         await statusMessage.edit({ embeds: [embed] });
         // Store the thread -> session mapping
-        setThreadSession(thread.id, result.sessionId, channelId, result.worktreePath);
+        setThreadSession(thread.id, result.sessionId, channelId, result.worktreePath, result.worktreeBranch);
       } else {
         await interaction.editReply({ content: '', embeds: [embed] });
       }
@@ -327,16 +327,16 @@ export async function handleClaudeContinueCommand(
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, message.content, duration);
-            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, message.content, duration);
-            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createErrorEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch);
+            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           }
         } catch (discordError) {
@@ -377,21 +377,47 @@ export async function handleClaudeContinueCommand(
 }
 
 /**
- * Create commit button if Git is detected
+ * Create action buttons (commit and/or merge)
  */
-export function createCommitButton(sessionId: string, vcsType: VcsType = 'none'): ActionRowBuilder<ButtonBuilder> | undefined {
-  // Only add commit button if VCS is detected
+export function createActionButtons(
+  sessionId: string,
+  vcsType: VcsType = 'none',
+  worktreeBranch?: string
+): ActionRowBuilder<ButtonBuilder> | undefined {
+  const buttons: ButtonBuilder[] = [];
+
+  // Add commit button if Git is detected
   if (vcsType === 'git') {
     const commitButton = new ButtonBuilder()
       .setCustomId(`commit_${sessionId}_${vcsType}`)
       .setLabel(getCommitButtonLabel(vcsType))
       .setStyle(ButtonStyle.Success)
       .setEmoji('✅');
+    buttons.push(commitButton);
+  }
 
-    return new ActionRowBuilder<ButtonBuilder>().addComponents(commitButton);
+  // Add merge button if working in a worktree
+  if (worktreeBranch && worktreeBranch.startsWith('worktree/')) {
+    const mergeButton = new ButtonBuilder()
+      .setCustomId(`merge_${sessionId}`)
+      .setLabel('Merge into main')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('🔀');
+    buttons.push(mergeButton);
+  }
+
+  if (buttons.length > 0) {
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
   }
 
   return undefined;
+}
+
+/**
+ * Create commit button if Git is detected (deprecated - use createActionButtons)
+ */
+export function createCommitButton(sessionId: string, vcsType: VcsType = 'none'): ActionRowBuilder<ButtonBuilder> | undefined {
+  return createActionButtons(sessionId, vcsType);
 }
 
 /**
@@ -423,7 +449,13 @@ export function formatResult(content: string): string {
 /**
  * Create a success result embed
  */
-export function createResultEmbed(prompt: string, result: string, duration: string): EmbedBuilder {
+export function createResultEmbed(
+  prompt: string,
+  result: string,
+  duration: string,
+  worktreePath?: string,
+  worktreeBranch?: string
+): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0x00ff00) // Green
     .setTitle('✅ Task Completed')
@@ -431,8 +463,17 @@ export function createResultEmbed(prompt: string, result: string, duration: stri
     .addFields(
       { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
       { name: '⏱️ Duration', value: `${duration}s`, inline: true }
-    )
-    .setFooter({ text: 'Claude Code Agent' })
+    );
+
+  // Add worktree information if present
+  if (worktreePath && worktreeBranch) {
+    embed.addFields(
+      { name: '🌳 Worktree', value: `\`${worktreePath}\``, inline: false },
+      { name: '🔀 Branch', value: `\`${worktreeBranch}\``, inline: true }
+    );
+  }
+
+  embed.setFooter({ text: 'Claude Code Agent' })
     .setTimestamp();
 
   return embed;
@@ -441,7 +482,13 @@ export function createResultEmbed(prompt: string, result: string, duration: stri
 /**
  * Create an error embed
  */
-export function createErrorEmbed(prompt: string, error: string, duration: string): EmbedBuilder {
+export function createErrorEmbed(
+  prompt: string,
+  error: string,
+  duration: string,
+  worktreePath?: string,
+  worktreeBranch?: string
+): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0xff0000) // Red
     .setTitle('❌ Error')
@@ -449,8 +496,17 @@ export function createErrorEmbed(prompt: string, error: string, duration: string
     .addFields(
       { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
       { name: '⏱️ Duration', value: `${duration}s`, inline: true }
-    )
-    .setFooter({ text: 'Claude Code Agent' })
+    );
+
+  // Add worktree information if present
+  if (worktreePath && worktreeBranch) {
+    embed.addFields(
+      { name: '🌳 Worktree', value: `\`${worktreePath}\``, inline: false },
+      { name: '🔀 Branch', value: `\`${worktreeBranch}\``, inline: true }
+    );
+  }
+
+  embed.setFooter({ text: 'Claude Code Agent' })
     .setTimestamp();
 
   return embed;

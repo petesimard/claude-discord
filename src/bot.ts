@@ -1,6 +1,6 @@
-import { Client, GatewayIntentBits, Events, EmbedBuilder } from 'discord.js';
-import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed } from './utils/config.js';
-import { handleClaudeCommand, handleClaudeContinueCommand, createCommitButton, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
+import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel } from 'discord.js';
+import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed, ChannelSettings } from './utils/config.js';
+import { handleClaudeCommand, handleClaudeContinueCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
 import { getThreadSession } from './agent/sessions.js';
@@ -13,6 +13,64 @@ export const client = new Client({
     GatewayIntentBits.MessageContent, // Required to read message content and mentions
   ],
 });
+
+/**
+ * Unified permission and settings checker for all handlers.
+ * Works for both regular channels and forum threads by checking session data.
+ * @param channel The Discord channel or thread
+ * @returns Channel settings and working path, or null if not authorized
+ */
+function getChannelPermissions(channel: Channel): {
+  settings: ChannelSettings;
+  workingPath: string;
+  worktreePath?: string;
+  worktreeBranch?: string;
+} | null {
+  // Check if this is a forum thread
+  if (channel.isThread()) {
+    // Get session data to find the source channel
+    const sessionData = getThreadSession(channel.id);
+    if (!sessionData) {
+      return null;
+    }
+
+    // Get settings from the source channel (where /claude was run)
+    const settings = getChannelSettings(sessionData.sourceChannelId);
+    if (!settings) {
+      return null;
+    }
+
+    // For threads, use worktree path if available, otherwise use the main path
+    const workingPath = sessionData.worktreePath || settings.path;
+
+    return {
+      settings,
+      workingPath,
+      worktreePath: sessionData.worktreePath,
+      worktreeBranch: sessionData.worktreeBranch,
+    };
+  } else {
+    // Regular channel - check if it's allowed
+    if (!isChannelAllowed(channel.id)) {
+      return null;
+    }
+
+    const settings = getChannelSettings(channel.id);
+    if (!settings) {
+      return null;
+    }
+
+    const workingPath = getWorkingPathForChannel(channel.id);
+    if (!workingPath) {
+      return null;
+    }
+
+    return {
+      settings,
+      workingPath,
+    };
+  }
+}
 
 // ClientReady event - bot is online and ready
 client.once(Events.ClientReady, async (readyClient) => {
@@ -75,25 +133,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Defer the reply immediately
       await interaction.deferReply();
 
-      const channelId = interaction.channelId;
-
-      // Check if the command is from an allowed channel
-      if (!isChannelAllowed(channelId)) {
+      // Use unified permission checker
+      const permissions = getChannelPermissions(interaction.channel!);
+      if (!permissions) {
         await interaction.editReply({
           content: '❌ This bot is not configured for this channel.',
         });
         return;
       }
 
-      // Get the working path for this channel
-      const workingPath = getWorkingPathForChannel(channelId);
-      if (!workingPath) {
-        await interaction.editReply({
-          content: '❌ No working directory configured for this channel.',
-        });
-        return;
-      }
-
+      const workingPath = permissions.workingPath;
       const startTime = Date.now();
 
       try {
@@ -186,6 +235,108 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.editReply({ content: '', embeds: [embed] });
       }
+    } else if (interaction.customId.startsWith('merge_')) {
+      // Defer the reply immediately
+      await interaction.deferReply();
+
+      // Use unified permission checker
+      const permissions = getChannelPermissions(interaction.channel!);
+      if (!permissions) {
+        await interaction.editReply({
+          content: '❌ This bot is not configured for this channel.',
+        });
+        return;
+      }
+
+      const worktreePath = permissions.worktreePath;
+      const worktreeBranch = permissions.worktreeBranch;
+
+      if (!worktreePath || !worktreeBranch) {
+        await interaction.editReply({
+          content: '❌ No worktree information found for this session.',
+        });
+        return;
+      }
+
+      if (!worktreeBranch.startsWith('worktree/')) {
+        await interaction.editReply({
+          content: '❌ This session is not using a worktree branch.',
+        });
+        return;
+      }
+
+      const mainRepoPath = permissions.settings.path;
+      const startTime = Date.now();
+
+      try {
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+
+        // Send initial status
+        await interaction.editReply('⏳ Preparing to merge into main...');
+
+        // Check if worktree has uncommitted changes
+        const statusResult = await execAsync('git status --porcelain', { cwd: worktreePath });
+        if (statusResult.stdout.trim()) {
+          await interaction.editReply({
+            content: '❌ The worktree has uncommitted changes. Please commit them first using the "Commit to Git" button.',
+          });
+          return;
+        }
+
+        await interaction.editReply('🔄 Switching to main branch...');
+
+        // Switch to main repo and checkout main/master
+        const { stdout: branchList } = await execAsync('git branch', { cwd: mainRepoPath });
+        const hasMain = branchList.includes(' main');
+        const mainBranch = hasMain ? 'main' : 'master';
+
+        await execAsync(`git checkout ${mainBranch}`, { cwd: mainRepoPath });
+
+        await interaction.editReply(`🔀 Merging ${worktreeBranch} into ${mainBranch}...`);
+
+        // Merge the worktree branch into main
+        const mergeResult = await execAsync(`git merge ${worktreeBranch} --no-ff -m "Merge worktree session: ${worktreeBranch}"`, {
+          cwd: mainRepoPath
+        });
+
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        // Create success embed
+        const embed = new EmbedBuilder()
+          .setColor(0x00ff00) // Green
+          .setTitle('✅ Merged into ' + mainBranch)
+          .setDescription('```\n' + (mergeResult.stdout || mergeResult.stderr || 'Merge successful').substring(0, 3900) + '\n```')
+          .addFields(
+            { name: '🔀 Branch', value: worktreeBranch, inline: false },
+            { name: '🎯 Target', value: mainBranch, inline: true },
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+
+      } catch (error) {
+        // Handle any errors during execution
+        console.error('Error merging:', error);
+
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        const embed = new EmbedBuilder()
+          .setColor(0xff0000) // Red
+          .setTitle('❌ Merge Failed')
+          .setDescription('```\n' + errorMessage.substring(0, 3900) + '\n```')
+          .addFields(
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+      }
     }
     return;
   }
@@ -193,11 +344,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // Handle messages (for @mentions in forum threads to continue conversations)
 client.on(Events.MessageCreate, async (message) => {
-  console.log(`[Bot] 🔔 MessageCreate event fired! Channel: ${message.channel.id}, Author: ${message.author.tag}, Bot: ${message.author.bot}`);
+  //console.log(`[Bot] 🔔 MessageCreate event fired! Channel: ${message.channel.id}, Author: ${message.author.tag}, Bot: ${message.author.bot}`);
 
   // Ignore bot messages
   if (message.author.bot) {
-    console.log(`[Bot] Ignoring bot message`);
+    //console.log(`[Bot] Ignoring bot message`);
     return;
   }
 
@@ -214,7 +365,15 @@ client.on(Events.MessageCreate, async (message) => {
 
   console.log(`[Bot] Checking for session in thread ${message.channel.id}`);
 
-  // Get the session data for this thread
+  // Use unified permission checker
+  const permissions = getChannelPermissions(message.channel);
+  if (!permissions) {
+    console.log(`[Bot] ❌ No session or permissions found for thread ${message.channel.id}`);
+    await message.reply('⚠️ No session found for this thread. Please start a new conversation with `/claude` in a configured channel.');
+    return;
+  }
+
+  // Get the session data to get the session ID
   const sessionData = getThreadSession(message.channel.id);
   if (!sessionData) {
     console.log(`[Bot] ❌ No session found for thread ${message.channel.id}`);
@@ -224,16 +383,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   console.log(`[Bot] ✅ Found session ${sessionData.sessionId} for thread ${message.channel.id} (source channel: ${sessionData.sourceChannelId})`);
 
-  // Get channel settings from the source channel (where /claude was run)
-  const channelSettings = getChannelSettings(sessionData.sourceChannelId);
-  if (!channelSettings) {
-    console.log(`[Bot] ❌ No settings found for source channel ${sessionData.sourceChannelId}`);
-    await message.reply('⚠️ Configuration error: source channel no longer configured.');
-    return;
-  }
-
-  console.log(`[Bot] Using settings from source channel ${sessionData.sourceChannelId}: path=${channelSettings.path}`);
-
   // Verify the thread is in the expected forum channel
   const parentChannel = message.channel.parent;
   if (!parentChannel) {
@@ -242,10 +391,10 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  console.log(`[Bot] Thread parent channel: ${parentChannel.id}, Expected forum channel: ${channelSettings.forumChannelId}`);
+  console.log(`[Bot] Thread parent channel: ${parentChannel.id}, Expected forum channel: ${permissions.settings.forumChannelId}`);
 
-  if (channelSettings.forumChannelId && parentChannel.id !== channelSettings.forumChannelId) {
-    console.log(`[Bot] ❌ Thread parent ${parentChannel.id} does not match expected forum channel ${channelSettings.forumChannelId}`);
+  if (permissions.settings.forumChannelId && parentChannel.id !== permissions.settings.forumChannelId) {
+    console.log(`[Bot] ❌ Thread parent ${parentChannel.id} does not match expected forum channel ${permissions.settings.forumChannelId}`);
     await message.reply('⚠️ This thread is not in the correct forum channel.');
     return;
   }
@@ -305,16 +454,16 @@ client.on(Events.MessageCreate, async (message) => {
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createResultEmbed(prompt, agentMessage.content, duration);
-            const commitButton = agentMessage.sessionId ? createCommitButton(agentMessage.sessionId, agentMessage.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createResultEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch);
+            const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
             await statusMessage.edit({ embeds: [embed], components });
           } else if (agentMessage.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-            const embed = createErrorEmbed(prompt, agentMessage.content, duration);
-            const commitButton = agentMessage.sessionId ? createCommitButton(agentMessage.sessionId, agentMessage.vcsType) : undefined;
-            const components = commitButton ? [commitButton] : [];
+            const embed = createErrorEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch);
+            const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
+            const components = actionButtons ? [actionButtons] : [];
             await statusMessage.edit({ embeds: [embed], components });
           }
         } catch (discordError) {
@@ -322,10 +471,11 @@ client.on(Events.MessageCreate, async (message) => {
           console.error('Failed to update Discord message:', discordError);
         }
       },
-      channelSettings.path,
-      channelSettings,
+      permissions.settings.path,
+      permissions.settings,
       sessionData.sessionId, // Pass the session ID to resume
-      sessionData.worktreePath // Pass the worktree path if it exists
+      sessionData.worktreePath, // Pass the worktree path if it exists
+      sessionData.worktreeBranch // Pass the worktree branch if it exists
     );
 
     // If no result was sent, ensure we have a completion message

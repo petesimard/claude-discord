@@ -7,6 +7,7 @@ interface ThreadSessionData {
   sessionId: string;
   sourceChannelId: string; // The channel where /claude was originally run
   worktreePath?: string; // The worktree path for this session (if using worktrees)
+  worktreeBranch?: string; // The worktree branch name (if using worktrees)
 }
 
 // Map of Discord forum thread ID -> session data
@@ -26,11 +27,13 @@ export function setThreadSession(
   threadId: string,
   sessionId: string,
   sourceChannelId: string,
-  worktreePath?: string
+  worktreePath?: string,
+  worktreeBranch?: string
 ): void {
-  threadSessions.set(threadId, { sessionId, sourceChannelId, worktreePath });
+  threadSessions.set(threadId, { sessionId, sourceChannelId, worktreePath, worktreeBranch });
   const worktreeInfo = worktreePath ? `, worktree: ${worktreePath}` : '';
-  console.log(`[Sessions] Mapped thread ${threadId} to session ${sessionId} (source channel: ${sourceChannelId}${worktreeInfo})`);
+  const branchInfo = worktreeBranch ? `, branch: ${worktreeBranch}` : '';
+  console.log(`[Sessions] Mapped thread ${threadId} to session ${sessionId} (source channel: ${sourceChannelId}${worktreeInfo}${branchInfo})`);
 }
 
 /**
