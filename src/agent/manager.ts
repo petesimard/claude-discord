@@ -1,15 +1,23 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { detectVcs, VcsType } from '../utils/vcs.js';
 import type { ChannelSettings } from '../utils/config.js';
+import { createWorktree } from '../utils/worktree.js';
+import * as path from 'path';
 
 export interface AgentMessage {
   type: 'status' | 'result' | 'error';
   content: string;
   sessionId?: string;
   vcsType?: VcsType;
+  worktreePath?: string;
 }
 
 export type MessageCallback = (message: AgentMessage) => Promise<void>;
+
+export interface ExecutionResult {
+  sessionId: string;
+  worktreePath?: string;
+}
 
 /**
  * Execute a Claude Code prompt with streaming updates
@@ -18,22 +26,72 @@ export type MessageCallback = (message: AgentMessage) => Promise<void>;
  * @param workingPath The working directory for this execution
  * @param channelSettings The channel settings (for autoUpdate, etc.)
  * @param resumeSessionId Optional session ID to resume a previous conversation
- * @returns The session ID for this execution
+ * @param existingWorktreePath Optional worktree path when resuming a session
+ * @returns The execution result containing session ID and worktree path
  */
 export async function executeClaudePrompt(
   prompt: string,
   onMessage: MessageCallback,
   workingPath: string,
   channelSettings: ChannelSettings,
-  resumeSessionId?: string
-): Promise<string> {
+  resumeSessionId?: string,
+  existingWorktreePath?: string
+): Promise<ExecutionResult> {
   // Save the original working directory
   const originalCwd = process.cwd();
+  let actualWorkingPath = workingPath;
+  let createdWorktreePath: string | undefined = undefined;
 
   try {
     console.log(`[Agent] Executing prompt (session: ${resumeSessionId || 'new'})`);
     console.log(`[Agent] Original working directory: ${originalCwd}`);
     console.log(`[Agent] Target working directory: ${workingPath}`);
+
+    // Handle worktree creation for new conversations
+    if (!resumeSessionId && channelSettings.workTreeBase) {
+      // This is a new conversation and worktrees are enabled
+      const workTreeBase = channelSettings.workTreeBase === '../'
+        ? path.resolve(workingPath, '..')
+        : path.resolve(channelSettings.workTreeBase);
+
+      console.log(`[Agent] Worktrees enabled, base: ${workTreeBase}`);
+
+      // Generate a temporary session ID for the worktree name
+      const tempSessionId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+      try {
+        await onMessage({
+          type: 'status',
+          content: '🌳 Creating worktree for this session...'
+        });
+
+        createdWorktreePath = await createWorktree(workingPath, workTreeBase, tempSessionId);
+        actualWorkingPath = createdWorktreePath;
+
+        console.log(`[Agent] Using worktree: ${actualWorkingPath}`);
+
+        await onMessage({
+          type: 'status',
+          content: '✅ Worktree created'
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[Agent] Failed to create worktree: ${errorMessage}`);
+        await onMessage({
+          type: 'status',
+          content: '⚠️  Failed to create worktree, using main directory instead'
+        });
+        // Fall back to main directory
+        createdWorktreePath = undefined;
+        actualWorkingPath = workingPath;
+      }
+    } else if (existingWorktreePath) {
+      // Resume a session with an existing worktree
+      console.log(`[Agent] Resuming with existing worktree: ${existingWorktreePath}`);
+      actualWorkingPath = existingWorktreePath;
+    }
+
+    console.log(`[Agent] Final working directory: ${actualWorkingPath}`);
 
     // Log DEBUG mode status
     if (process.env.DEBUG === '1') {
@@ -48,23 +106,23 @@ export async function executeClaudePrompt(
 
     // Check if the working directory exists
     const fs = await import('fs');
-    if (!fs.existsSync(workingPath)) {
-      throw new Error(`Working directory does not exist: ${workingPath}\n\nPlease create the directory or update your CHANNEL_MAPPINGS in the .env file.`);
+    if (!fs.existsSync(actualWorkingPath)) {
+      throw new Error(`Working directory does not exist: ${actualWorkingPath}\n\nPlease create the directory or update your CHANNEL_MAPPINGS in the .env file.`);
     }
 
     // Check if directory is readable
     try {
-      fs.accessSync(workingPath, fs.constants.R_OK | fs.constants.W_OK);
+      fs.accessSync(actualWorkingPath, fs.constants.R_OK | fs.constants.W_OK);
     } catch (error) {
-      throw new Error(`No read/write permissions for working directory: ${workingPath}\n\nPlease check directory permissions.`);
+      throw new Error(`No read/write permissions for working directory: ${actualWorkingPath}\n\nPlease check directory permissions.`);
     }
 
     // Change to the configured working directory
-    process.chdir(workingPath);
+    process.chdir(actualWorkingPath);
     console.log(`[Agent] Changed to working directory: ${process.cwd()}`);
 
     // Detect VCS type
-    const vcsType = detectVcs(workingPath);
+    const vcsType = detectVcs(actualWorkingPath);
     console.log(`[Agent] Detected VCS type: ${vcsType}`);
 
     // Auto-update repository if enabled and this is a new conversation
@@ -83,7 +141,7 @@ export async function executeClaudePrompt(
         if (vcsType === 'git') {
           console.log('[Agent] Running git pull...');
           const result = await execAsync('git pull', {
-            cwd: workingPath,
+            cwd: actualWorkingPath,
             timeout: 30000
           });
           const updateOutput = result.stdout || result.stderr || 'Git pull completed';
@@ -107,7 +165,7 @@ export async function executeClaudePrompt(
 
     // Configure the agent with all tools and bypass permissions
     const options = {
-      workingDirectory: workingPath,
+      workingDirectory: actualWorkingPath,
       allowedTools: [
         'Read',
         'Write',
@@ -179,7 +237,8 @@ export async function executeClaudePrompt(
           type: 'result',
           content: result,
           sessionId: sessionId,
-          vcsType: vcsType
+          vcsType: vcsType,
+          worktreePath: createdWorktreePath
         });
       }
 
@@ -196,14 +255,16 @@ export async function executeClaudePrompt(
             type: 'error',
             content: `❌ Billing Error: ${errorContent}\n\nYour Anthropic API key has insufficient credits. Please add credits at https://console.anthropic.com/`,
             sessionId: sessionId,
-            vcsType: vcsType
+            vcsType: vcsType,
+            worktreePath: createdWorktreePath
           });
         } else {
           await onMessage({
             type: 'error',
             content: `Error: ${errorContent}`,
             sessionId: sessionId,
-            vcsType: vcsType
+            vcsType: vcsType,
+            worktreePath: createdWorktreePath
           });
         }
       }
@@ -216,16 +277,20 @@ export async function executeClaudePrompt(
         type: 'result',
         content: 'Task completed.',
         sessionId: sessionId,
-        vcsType: vcsType
+        vcsType: vcsType,
+        worktreePath: createdWorktreePath
       });
     }
 
-    // Return the session ID for continuation
+    // Return the session ID and worktree path for continuation
     if (!sessionId) {
       throw new Error('No session ID was captured from agent execution');
     }
 
-    return sessionId;
+    return {
+      sessionId,
+      worktreePath: createdWorktreePath
+    };
 
   } catch (error) {
     // Handle any errors from the agent execution
@@ -247,7 +312,7 @@ export async function executeClaudePrompt(
         '  → Verify installation: `claude --version`\n' +
         '  → Reinstall if needed: https://claude.ai/install.sh\n\n' +
         '• **Directory Issue**: Permission or path problems\n' +
-        `  → Check directory exists and is writable: ${workingPath}\n\n` +
+        `  → Check directory exists and is writable: ${actualWorkingPath}\n\n` +
         'Run the bot with more verbose logging to see detailed errors.';
     }
 

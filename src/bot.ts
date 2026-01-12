@@ -201,14 +201,8 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  console.log(`[Bot] Message content: "${message.content}"`);
-  console.log(`[Bot] Channel type: ${message.channel.type}, Is thread: ${message.channel.isThread()}`);
-  console.log(`[Bot] Mentions: ${message.mentions.users.map(u => u.tag).join(', ')}`);
-  console.log(`[Bot] Bot mentioned: ${message.mentions.has(client.user!)}`);
-
   // Check if bot was mentioned
   if (!message.mentions.has(client.user!)) {
-    console.log(`[Bot] Bot not mentioned, ignoring`);
     return;
   }
 
@@ -285,7 +279,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     let statusMessage = await message.reply({ embeds: [initialEmbed] });
 
-    // Execute the prompt with the existing session ID
+    // Execute the prompt with the existing session ID and worktree
     await executeClaudePrompt(
       prompt,
       async (agentMessage: AgentMessage) => {
@@ -330,7 +324,8 @@ client.on(Events.MessageCreate, async (message) => {
       },
       channelSettings.path,
       channelSettings,
-      sessionData.sessionId // Pass the session ID to resume
+      sessionData.sessionId, // Pass the session ID to resume
+      sessionData.worktreePath // Pass the worktree path if it exists
     );
 
     // If no result was sent, ensure we have a completion message

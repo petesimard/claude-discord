@@ -285,8 +285,11 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project"}}
 # Channel with auto-update enabled
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","autoUpdate":true}}
 
-# Multiple channels with different projects and settings
-CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
+# Channel with worktrees enabled for parallel conversations
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../"}}
+
+# Full example with all features: forum threads, auto-update, and worktrees
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"forumChannelId":"9999999999","workTreeBase":"../"},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
 ```
 
 **Behavior:**
@@ -303,6 +306,15 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true},"
   - Runs `git pull` on the repository
   - Shows status updates in Discord ("🔄 Updating repository..." → "✅ Repository updated")
   - If update fails, shows a warning but continues with the conversation
+- When `workTreeBase` is configured:
+  - Each **new** conversation creates a separate Git worktree with its own branch
+  - Allows multiple parallel conversations without conflicts
+  - Set to `"../"` to create worktrees in the parent directory of your project
+  - Or specify an absolute path like `"/tmp/worktrees"`
+  - Each worktree is named `<repo-folder-name>-<session-id>` (e.g., `my-project-abc123`)
+  - Each worktree gets a unique branch `worktree/<repo-folder-name>-<session-id>` based on your current branch
+  - When continuing a conversation (via @mention), the original worktree is reused
+  - Old worktrees (>24 hours) and their branches are automatically cleaned up
 - Additional settings can be added per channel (e.g., allowed tools, permissions, model selection)
 
 **Startup logging:**
@@ -321,6 +333,46 @@ The bot is configured with `permissionMode: "bypassPermissions"`, meaning:
 - The agent can execute operations without approval
 - Suitable for trusted environments
 - If you need more control, modify `src/agent/manager.ts` to use different permission modes
+
+### Git Worktrees
+
+Git worktrees allow you to have multiple working directories for the same repository, enabling parallel conversations without conflicts.
+
+**Why use worktrees?**
+
+- **Parallel conversations**: Multiple users can work on different features simultaneously
+- **No conflicts**: Each conversation has its own isolated working directory
+- **Clean history**: Changes in one conversation don't affect others
+- **Easy cleanup**: Old worktrees are automatically removed after 24 hours
+
+**How it works:**
+
+1. When you start a new `/claude` conversation with `workTreeBase` configured, the bot:
+   - Creates a new Git worktree in the specified base directory
+   - Names the worktree `<repo-folder-name>-<session-id>` (e.g., `my-project-abc123`)
+   - Creates a new branch `worktree/<repo-folder-name>-<session-id>` based on your current branch
+   - Uses that worktree as the working directory for the entire conversation
+
+2. When you continue the conversation (via @mention in a forum thread):
+   - The bot reuses the original worktree for that session
+   - All changes remain in that worktree and branch
+
+3. After 24 hours of inactivity:
+   - Old worktrees are automatically cleaned up
+   - Associated branches are also deleted
+   - The main repository is unaffected
+
+**Configuration:**
+
+```env
+# Create worktrees in the parent directory
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../"}}
+
+# Create worktrees in a specific directory
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"/tmp/claude-worktrees"}}
+```
+
+**Note:** The `path` setting still points to your main Git repository. The worktrees are created from this repository.
 
 ### Allowed Tools
 
@@ -344,14 +396,16 @@ To restrict tools, modify the `allowedTools` array in `src/agent/manager.ts`.
 claude-discord/
 ├── src/
 │   ├── index.ts              # Main entry point, command registration
-│   ├── bot.ts                # Discord client setup
+│   ├── bot.ts                # Discord client setup and event handlers
 │   ├── commands/
 │   │   └── claude.ts         # /claude command handler
 │   ├── agent/
 │   │   ├── manager.ts        # Agent SDK integration
-│   │   └── sessions.ts       # Session management
+│   │   └── sessions.ts       # Session management (thread → session mapping)
 │   └── utils/
-│       └── config.ts         # Environment config loader
+│       ├── config.ts         # Environment config loader
+│       ├── vcs.ts            # Git detection utilities
+│       └── worktree.ts       # Git worktree management
 ├── dist/                     # Compiled JavaScript (after build)
 ├── .env                      # Environment variables (create this)
 ├── .env.example              # Environment template

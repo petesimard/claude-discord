@@ -146,7 +146,7 @@ export async function handleClaudeCommand(
     }
 
     // Execute the prompt with streaming updates (starts fresh - no session resumption)
-    const sessionId = await executeClaudePrompt(
+    const result = await executeClaudePrompt(
       prompt,
       async (message: AgentMessage) => {
         try {
@@ -182,9 +182,9 @@ export async function handleClaudeCommand(
 
             if (thread && statusMessage) {
               await statusMessage.edit({ embeds: [embed], components });
-              // Store the thread -> session mapping with source channel
+              // Store the thread -> session mapping with source channel and worktree path
               if (message.sessionId) {
-                setThreadSession(thread.id, message.sessionId, channelId);
+                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath);
                 console.log(`[Claude] Mapped thread ${thread.id} to session ${message.sessionId} (source: ${channelId})`);
               }
             } else {
@@ -201,7 +201,7 @@ export async function handleClaudeCommand(
               await statusMessage.edit({ embeds: [embed], components });
               // Store the thread -> session mapping even on error
               if (message.sessionId) {
-                setThreadSession(thread.id, message.sessionId, channelId);
+                setThreadSession(thread.id, message.sessionId, channelId, message.worktreePath);
               }
             } else {
               await interaction.editReply({ content: '', embeds: [embed], components });
@@ -224,7 +224,7 @@ export async function handleClaudeCommand(
       if (thread && statusMessage) {
         await statusMessage.edit({ embeds: [embed] });
         // Store the thread -> session mapping
-        setThreadSession(thread.id, sessionId, channelId);
+        setThreadSession(thread.id, result.sessionId, channelId, result.worktreePath);
       } else {
         await interaction.editReply({ content: '', embeds: [embed] });
       }

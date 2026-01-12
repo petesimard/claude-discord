@@ -7,6 +7,7 @@ export interface ChannelSettings {
   path: string;
   autoUpdate?: boolean; // Auto git pull before new conversations
   forumChannelId?: string; // Forum channel to create session threads in
+  workTreeBase?: string; // Base directory for creating worktrees (defaults to ../)
 }
 
 export interface Config {
@@ -37,7 +38,12 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
     if (typeof parsed === 'object' && parsed !== null) {
       for (const [channelId, settings] of Object.entries(parsed)) {
         if (typeof settings === 'object' && settings !== null && 'path' in settings) {
-          const channelSettings = settings as { path: string; autoUpdate?: boolean; forumChannelId?: string | number };
+          const channelSettings = settings as {
+            path: string;
+            autoUpdate?: boolean;
+            forumChannelId?: string | number;
+            workTreeBase?: string;
+          };
           if (typeof channelSettings.path === 'string') {
             // Ensure forumChannelId is a string (Discord IDs must be strings to avoid truncation)
             let forumChannelId: string | undefined = undefined;
@@ -46,10 +52,17 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
               console.log(`[Config] Channel ${channelId}: forumChannelId = "${forumChannelId}" (type: ${typeof channelSettings.forumChannelId})`);
             }
 
+            // Get workTreeBase or use default
+            const workTreeBase = channelSettings.workTreeBase || undefined;
+            if (workTreeBase) {
+              console.log(`[Config] Channel ${channelId}: workTreeBase = "${workTreeBase}"`);
+            }
+
             mappings.set(channelId, {
               path: channelSettings.path,
               autoUpdate: channelSettings.autoUpdate === true,
-              forumChannelId: forumChannelId
+              forumChannelId: forumChannelId,
+              workTreeBase: workTreeBase
             });
           }
         }
