@@ -80,33 +80,22 @@ export async function executeClaudePrompt(
           content: '🔄 Updating repository...'
         });
 
-        let updateOutput: string;
-
         if (vcsType === 'git') {
           console.log('[Agent] Running git pull...');
           const result = await execAsync('git pull', {
             cwd: workingPath,
             timeout: 30000
           });
-          updateOutput = result.stdout || result.stderr || 'Git pull completed';
+          const updateOutput = result.stdout || result.stderr || 'Git pull completed';
           console.log('[Agent] Git pull output:', updateOutput.trim());
-        } else if (vcsType === 'svn') {
-          console.log('[Agent] Running svn update...');
-          const result = await execAsync('svn update', {
-            cwd: workingPath,
-            timeout: 30000
-          });
-          updateOutput = result.stdout || result.stderr || 'SVN update completed';
-          console.log('[Agent] SVN update output:', updateOutput.trim());
-        } else {
-          console.log('[Agent] No VCS detected, skipping auto-update');
-          updateOutput = 'No version control detected';
-        }
 
-        await onMessage({
-          type: 'status',
-          content: '✅ Repository updated'
-        });
+          await onMessage({
+            type: 'status',
+            content: '✅ Repository updated'
+          });
+        } else {
+          console.log('[Agent] No Git repository detected, skipping auto-update');
+        }
       } catch (updateError) {
         console.error('[Agent] Auto-update failed:', updateError);
         await onMessage({

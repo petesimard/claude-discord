@@ -5,9 +5,9 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 ## Features
 
 - 🤖 Execute Claude Code prompts via `/claude` slash command
-- 💬 **Interactive "Continue Conversation" buttons** - Click to continue any conversation with a modal popup
-- ✅ **Smart VCS commit buttons** - Auto-detects Git or SVN and shows the appropriate commit button
-- 🔗 Session-based conversation context - continue any conversation from any channel
+- 💬 **Forum-based sessions** - Each conversation gets its own forum thread for organization
+- ✅ **Smart Git commit buttons** - Auto-detects Git repositories and shows commit button
+- 🔗 Session-based conversation context - continue conversations by @mentioning the bot in forum threads
 - 📊 **Live status embeds** - Watch the agent work in real-time with dynamic status updates
 - 🛠️ Full access to Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch)
 - ⚡ Streaming responses with automatic embed updates
@@ -26,7 +26,6 @@ Before you begin, you'll need:
 2. **Claude Code CLI** - Required by the Agent SDK
 3. **Discord Bot Token** - From Discord Developer Portal
 4. **Anthropic API Key** - From Anthropic Console
-5. **SVN (Subversion)** - Optional, only needed if you want to use the "Commit to SVN" button
 
 ### Installing Claude Code
 
@@ -148,100 +147,103 @@ Each `/claude` command starts a **fresh conversation** with no memory of previou
 /claude run the tests and fix any failures
 ```
 
-#### Continuing a Conversation - Click the "Continue Conversation" Button
+#### Continuing a Conversation - @Mention the Bot in the Forum Thread
 
-Each response includes a **"💬 Continue Conversation"** button at the bottom. Click it to continue that specific conversation:
+When forum channels are configured, each conversation gets its own dedicated forum thread. To continue a conversation:
 
-1. Click the **"💬 Continue Conversation"** button on any previous response
-2. A text box will pop up
-3. Enter your follow-up prompt
-4. Click Submit
+1. Navigate to the forum thread created for your session
+2. @mention the bot along with your follow-up prompt
+3. The bot will respond in the same thread, maintaining context
 
-**Alternative: Manual `/claude-continue` Command**
+**Example:**
 
-You can also continue conversations manually using the session ID:
+```
+@ClaudeBot now find all places that call it
+```
+
+**Without Forum Channels:**
+
+If no forum channel is configured, the bot works in regular text channels. You can use the `/claude-continue` command:
 
 ```
 /claude-continue abc123def456 now find all places that call it
 ```
 
-#### Committing Changes (Git or SVN)
+#### Committing Changes (Git)
 
-Each response includes a commit button **if Git or SVN is detected** in your working directory. The button label changes based on what's detected:
+Each response includes a commit button **if Git is detected** in your working directory:
 - **"✅ Commit to Git"** - If `.git` directory is found
-- **"✅ Commit to SVN"** - If `.svn` directory is found
-- **No button** - If neither is detected
+- **No button** - If Git is not detected
 
 Click the button to commit all changes with an auto-generated message:
 
-1. Click the **"✅ Commit to Git/SVN"** button on any response
+1. Click the **"✅ Commit to Git"** button on any response
 2. The bot automatically commits all changes
 
-**For Git**, the bot will:
+The bot will:
 - Check for uncommitted changes with `git status`
 - Generate a commit message based on the changes (e.g., "Auto-commit: 3 files modified, 1 file added")
 - Run `git add -A` to stage all changes
 - Commit with the auto-generated message
 - Add "Co-Authored-By: Claude Sonnet 4.5" to the commit
 
-**For SVN**, the bot will:
-- Check for uncommitted changes with `svn status`
-- Generate a commit message based on the changes
-- Commit all changes with `svn commit`
-- Display the SVN output and confirmation
-
 ### How It Works
 
-1. **Initial Response**: Bot displays a **blue embed** with "⏳ Starting Claude Code agent..." or "⏳ Resuming Claude Code session..." showing your prompt
-2. **Working Status**: Embed updates in real-time showing:
+**With Forum Channels (Recommended):**
+
+1. **Slash Command**: Run `/claude [prompt]` in a configured channel
+2. **Forum Thread Created**: Bot creates a dedicated forum thread for this session
+3. **Initial Response**: Bot posts a **blue embed** in the thread with "⏳ Starting Claude Code agent..."
+4. **Working Status**: Embed updates in real-time showing:
    - Current tool being used (e.g., "🔄 Working... (using Read tool)")
    - Live execution time counter
    - Your original prompt
-3. **Completion**: Embed changes to **green** with final results:
+5. **Completion**: Embed changes to **green** with final results:
    - ✅ Green color-coded success message
    - Formatted result output (with code blocks for multi-line responses)
-   - Original prompt for reference
    - Execution duration
-   - **💬 "Continue Conversation" button** for easy follow-ups
-   - **✅ "Commit to SVN" button** to commit any changes made
+   - **✅ "Commit to Git" button** (if Git is detected)
    - Timestamp
-4. **Error Handling**: Rich embed with:
-   - ❌ Red color-coded error message
-   - Detailed error information
-   - Original prompt for context
-   - Execution duration
-   - **💬 "Continue Conversation" button** (if session is available)
-   - **✅ "Commit to SVN" button** to commit any changes made (if session is available)
+6. **Continue Conversation**: @mention the bot in the thread with your next prompt
+7. **Session Persistence**: The forum thread maintains the full conversation history
+
+**Without Forum Channels:**
+
+1. **Initial Response**: Bot displays embed directly in the channel
+2. **Working Status** and **Completion**: Same as above
+3. **Continue**: Use `/claude-continue [session-id] [prompt]` command
 
 ### Session Management
 
 Each conversation with Claude Code has its own **session**:
 
 - **Fresh Start**: Every `/claude` command starts a new conversation with no memory of previous interactions
-- **Continue Sessions**: Use `/claude-continue [session-id] [prompt]` to continue a specific conversation
-- **Easy Continuation**: Click the "💬 Continue Conversation" button on any response to continue that conversation
-- **Session Persistence**: Sessions persist until the bot restarts
-- **Cross-Channel**: Sessions work across any channel - you can continue a conversation started in one channel from another channel
+- **Forum Threads**: When configured, each session gets its own forum thread for organization
+- **Continue via @Mention**: In forum threads, @mention the bot to continue the conversation
+- **Session Persistence**: Sessions persist in their forum threads until the bot restarts
+- **Thread Mapping**: Each forum thread is linked to a specific Claude Code session
 
-**Example:**
+**Example (with Forum Channel):**
 
 ```
 User: /claude read the auth.py file
-Bot: ✅ Task Completed
+Bot: ✅ Session thread created: #session-abc123
+     (In the forum thread)
+     ✅ Task Completed
      I've read the authentication module...
-     [💬 Continue Conversation] [✅ Commit to SVN] (buttons)
+     [✅ Commit to Git] (button)
 
-User: (Clicks Continue Conversation, types:) "now find all places that call it"
+User: (In the thread) @ClaudeBot now find all places that call it
 Bot: ✅ Task Completed
      I found 5 places that call the auth module...
      (The agent remembers what "it" refers to from the previous message)
-     [💬 Continue Conversation] [✅ Commit to SVN] (buttons)
+     [✅ Commit to Git] (button)
 
-User: (Clicks Commit to SVN)
-Bot: ✅ Changes Committed to SVN
-     Committed revision 1234.
+User: (Clicks Commit to Git)
+Bot: ✅ Changes Committed to Git
+     [main abc123d] Auto-commit: 5 files modified
      💬 Commit Message: Auto-commit: 5 files modified
-     [💬 Continue Conversation] [✅ Commit to SVN] (buttons)
+     [✅ Commit to Git] (button)
 ```
 
 ## Configuration Options
@@ -271,7 +273,8 @@ CHANNEL_MAPPINGS={"1234567890123456789":{"path":"/path/to/project1"},"9876543210
 
 Each channel's settings object supports:
 - `path`: (Required) The working directory for this channel where Claude Code will execute commands and access files
-- `autoUpdate`: (Optional) Automatically run `git pull` or `svn update` before starting new conversations (default: `false`)
+- `autoUpdate`: (Optional) Automatically run `git pull` before starting new conversations (default: `false`)
+- `forumChannelId`: (Optional) Forum channel ID where session threads will be created. Get this by right-clicking a forum channel and selecting "Copy ID"
 
 **Example Configuration:**
 
@@ -290,11 +293,14 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true},"
 
 - The bot only responds in channels that are configured in the mappings
 - Each channel operates independently with its own working directory
-- VCS detection (Git/SVN) happens per directory, so different channels can use different version control systems
+- Git detection happens per directory
+- When `forumChannelId` is configured:
+  - Each `/claude` command creates a new forum thread in the specified forum channel
+  - Sessions are tied to forum threads for better organization
+  - Continue conversations by @mentioning the bot in the thread
 - When `autoUpdate` is enabled:
   - The repository is updated automatically before **new** conversations (not when continuing existing conversations)
-  - For Git: runs `git pull`
-  - For SVN: runs `svn update`
+  - Runs `git pull` on the repository
   - Shows status updates in Discord ("🔄 Updating repository..." → "✅ Repository updated")
   - If update fails, shows a warning but continues with the conversation
 - Additional settings can be added per channel (e.g., allowed tools, permissions, model selection)

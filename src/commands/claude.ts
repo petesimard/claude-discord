@@ -1,7 +1,8 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags } from 'discord.js';
 import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
 import { getChannelSettings, isChannelAllowed } from '../utils/config.js';
 import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
+import { setThreadSession } from '../agent/sessions.js';
 
 // Define the /claude command structure
 export const claudeCommand = new SlashCommandBuilder()
@@ -49,35 +50,103 @@ export async function handleClaudeCommand(
     return;
   }
 
+  // Get the channel settings
+  const channelSettings = getChannelSettings(channelId);
+  if (!channelSettings) {
+    await interaction.reply({
+      content: '❌ No settings configured for this channel.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   // Defer the reply immediately since agent execution can take a while
-  await interaction.deferReply();
+  // Make ephemeral if using forum channels (so the ack doesn't clutter the source channel)
+  await interaction.deferReply({
+    flags: channelSettings.forumChannelId ? MessageFlags.Ephemeral : undefined
+  });
 
   let lastStatus = '';
   let hasResult = false;
   const startTime = Date.now();
+  let thread: any = null;
+  let statusMessage: any = null;
 
   try {
-    // Send initial status embed
-    const initialEmbed = new EmbedBuilder()
-      .setColor(0x3498db) // Blue
-      .setTitle('⏳ Starting Claude Code Agent...')
-      .setDescription('Initializing agent and preparing to execute your request.')
-      .addFields(
-        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
-      )
-      .setFooter({ text: 'Claude Code Agent' })
-      .setTimestamp();
+    // Check if we should create a forum thread
+    if (channelSettings.forumChannelId) {
+      console.log(`[Claude] Attempting to fetch forum channel: ${channelSettings.forumChannelId} (length: ${channelSettings.forumChannelId.length})`);
 
-    await interaction.editReply({ embeds: [initialEmbed] });
+      // Verify the forum channel is accessible
+      let forumChannel;
+      try {
+        forumChannel = await interaction.client.channels.fetch(channelSettings.forumChannelId);
+      } catch (error) {
+        throw new Error(
+          `Cannot access forum channel ${channelSettings.forumChannelId}. ` +
+          `Make sure:\n` +
+          `1. The channel ID is correct (right-click forum channel → Copy ID)\n` +
+          `2. The forum channel is in the SAME server as the command channel\n` +
+          `3. The bot has "View Channel" permission for the forum channel\n` +
+          `\nError: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
 
-    // Get the channel settings
-    const channelSettings = getChannelSettings(channelId);
-    if (!channelSettings) {
-      throw new Error(`No settings configured for channel ${channelId}`);
+      if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+        throw new Error(
+          `Channel ${channelSettings.forumChannelId} is not a forum channel. ` +
+          `Make sure you're using the ID of a forum channel (the parent channel with posts, not a post itself).`
+        );
+      }
+
+      // Create a thread name from the prompt (max 100 characters)
+      const threadName = prompt.length > 100 ? prompt.substring(0, 97) + '...' : prompt;
+
+      // Send initial ack to interaction
+      await interaction.editReply({ content: `✅ Creating forum thread for your request...` });
+
+      // Create the forum thread
+      thread = await forumChannel.threads.create({
+        name: threadName,
+        message: {
+          content: `🤖 Claude Code Session\n📝 **Prompt:** ${prompt}`,
+        },
+      });
+
+      console.log(`[Claude] Created forum thread ${thread.id} for session`);
+
+      // Update interaction with thread link
+      await interaction.editReply({ content: `✅ Session thread created: <#${thread.id}>` });
+
+      // Send initial status in the thread
+      const initialEmbed = new EmbedBuilder()
+        .setColor(0x3498db) // Blue
+        .setTitle('⏳ Starting Claude Code Agent...')
+        .setDescription('Initializing agent and preparing to execute your request.')
+        .addFields(
+          { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
+        )
+        .setFooter({ text: 'Claude Code Agent' })
+        .setTimestamp();
+
+      statusMessage = await thread.send({ embeds: [initialEmbed] });
+    } else {
+      // No forum channel configured - use regular channel
+      const initialEmbed = new EmbedBuilder()
+        .setColor(0x3498db) // Blue
+        .setTitle('⏳ Starting Claude Code Agent...')
+        .setDescription('Initializing agent and preparing to execute your request.')
+        .addFields(
+          { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
+        )
+        .setFooter({ text: 'Claude Code Agent' })
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [initialEmbed] });
     }
 
     // Execute the prompt with streaming updates (starts fresh - no session resumption)
-    await executeClaudePrompt(
+    const sessionId = await executeClaudePrompt(
       prompt,
       async (message: AgentMessage) => {
         try {
@@ -96,21 +165,47 @@ export async function handleClaudeCommand(
                 )
                 .setFooter({ text: 'Claude Code Agent' })
                 .setTimestamp();
-              await interaction.editReply({ embeds: [statusEmbed] });
+
+              if (thread && statusMessage) {
+                await statusMessage.edit({ embeds: [statusEmbed] });
+              } else {
+                await interaction.editReply({ embeds: [statusEmbed] });
+              }
             }
           } else if (message.type === 'result') {
             // Final result - use embed
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
-            await interaction.editReply({ content: '', embeds: [embed], components });
+            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
+            const components = commitButton ? [commitButton] : [];
+
+            if (thread && statusMessage) {
+              await statusMessage.edit({ embeds: [embed], components });
+              // Store the thread -> session mapping with source channel
+              if (message.sessionId) {
+                setThreadSession(thread.id, message.sessionId, channelId);
+                console.log(`[Claude] Mapped thread ${thread.id} to session ${message.sessionId} (source: ${channelId})`);
+              }
+            } else {
+              await interaction.editReply({ content: '', embeds: [embed], components });
+            }
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createErrorEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
-            await interaction.editReply({ content: '', embeds: [embed], components });
+            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
+            const components = commitButton ? [commitButton] : [];
+
+            if (thread && statusMessage) {
+              await statusMessage.edit({ embeds: [embed], components });
+              // Store the thread -> session mapping even on error
+              if (message.sessionId) {
+                setThreadSession(thread.id, message.sessionId, channelId);
+              }
+            } else {
+              await interaction.editReply({ content: '', embeds: [embed], components });
+            }
           }
         } catch (discordError) {
           // Handle Discord API errors (rate limits, etc.)
@@ -125,7 +220,14 @@ export async function handleClaudeCommand(
     if (!hasResult) {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
       const embed = createResultEmbed(prompt, 'Task completed.', duration);
-      await interaction.editReply({ content: '', embeds: [embed] });
+
+      if (thread && statusMessage) {
+        await statusMessage.edit({ embeds: [embed] });
+        // Store the thread -> session mapping
+        setThreadSession(thread.id, sessionId, channelId);
+      } else {
+        await interaction.editReply({ content: '', embeds: [embed] });
+      }
     }
   } catch (error) {
     // Handle any errors during execution
@@ -141,7 +243,12 @@ export async function handleClaudeCommand(
         `${errorMessage}\n\nPlease check the bot logs for more details.`,
         duration
       );
-      await interaction.editReply({ content: '', embeds: [embed] });
+
+      if (thread && statusMessage) {
+        await statusMessage.edit({ embeds: [embed] });
+      } else {
+        await interaction.editReply({ content: '', embeds: [embed] });
+      }
     } catch (discordError) {
       console.error('Failed to send error message to Discord:', discordError);
     }
@@ -221,13 +328,15 @@ export async function handleClaudeContinueCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
+            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
+            const components = commitButton ? [commitButton] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createErrorEmbed(prompt, message.content, duration);
-            const components = message.sessionId ? [createContinueButton(message.sessionId, message.vcsType)] : [];
+            const commitButton = message.sessionId ? createCommitButton(message.sessionId, message.vcsType) : undefined;
+            const components = commitButton ? [commitButton] : [];
             await interaction.editReply({ content: '', embeds: [embed], components });
           }
         } catch (discordError) {
@@ -268,29 +377,21 @@ export async function handleClaudeContinueCommand(
 }
 
 /**
- * Create buttons for continuing the conversation and optionally committing
+ * Create commit button if Git is detected
  */
-export function createContinueButton(sessionId: string, vcsType: VcsType = 'none'): ActionRowBuilder<ButtonBuilder> {
-  const continueButton = new ButtonBuilder()
-    .setCustomId(`continue_${sessionId}`)
-    .setLabel('Continue Conversation')
-    .setStyle(ButtonStyle.Primary)
-    .setEmoji('💬');
-
-  const buttons = [continueButton];
-
+export function createCommitButton(sessionId: string, vcsType: VcsType = 'none'): ActionRowBuilder<ButtonBuilder> | undefined {
   // Only add commit button if VCS is detected
-  if (vcsType !== 'none') {
+  if (vcsType === 'git') {
     const commitButton = new ButtonBuilder()
       .setCustomId(`commit_${sessionId}_${vcsType}`)
       .setLabel(getCommitButtonLabel(vcsType))
       .setStyle(ButtonStyle.Success)
       .setEmoji('✅');
 
-    buttons.push(commitButton);
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(commitButton);
   }
 
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+  return undefined;
 }
 
 /**

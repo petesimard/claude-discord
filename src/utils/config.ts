@@ -5,7 +5,8 @@ dotenvConfig();
 
 export interface ChannelSettings {
   path: string;
-  autoUpdate?: boolean; // Auto git pull or svn update before new conversations
+  autoUpdate?: boolean; // Auto git pull before new conversations
+  forumChannelId?: string; // Forum channel to create session threads in
 }
 
 export interface Config {
@@ -36,11 +37,19 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
     if (typeof parsed === 'object' && parsed !== null) {
       for (const [channelId, settings] of Object.entries(parsed)) {
         if (typeof settings === 'object' && settings !== null && 'path' in settings) {
-          const channelSettings = settings as { path: string; autoUpdate?: boolean };
+          const channelSettings = settings as { path: string; autoUpdate?: boolean; forumChannelId?: string | number };
           if (typeof channelSettings.path === 'string') {
+            // Ensure forumChannelId is a string (Discord IDs must be strings to avoid truncation)
+            let forumChannelId: string | undefined = undefined;
+            if (channelSettings.forumChannelId !== undefined) {
+              forumChannelId = String(channelSettings.forumChannelId);
+              console.log(`[Config] Channel ${channelId}: forumChannelId = "${forumChannelId}" (type: ${typeof channelSettings.forumChannelId})`);
+            }
+
             mappings.set(channelId, {
               path: channelSettings.path,
-              autoUpdate: channelSettings.autoUpdate === true
+              autoUpdate: channelSettings.autoUpdate === true,
+              forumChannelId: forumChannelId
             });
           }
         }
