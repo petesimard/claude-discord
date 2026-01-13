@@ -111,8 +111,8 @@ export async function handleClaudeCommand(
         );
       }
 
-      // Create a thread name from the prompt (max 100 characters)
-      const threadName = prompt.length > 100 ? prompt.substring(0, 97) + '...' : prompt;
+      // Create a thread name from the prompt (max 40 characters)
+      const threadName = prompt.length > 40 ? prompt.substring(0, 37) + '...' : prompt;
 
       // Send initial ack to interaction
       await interaction.editReply({ content: `✅ Creating forum thread for your request...` });
