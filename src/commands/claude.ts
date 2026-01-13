@@ -495,7 +495,8 @@ export async function handleClaudeQuickCommand(
       channelSettings,
       undefined, // No session resumption
       undefined, // No worktree path
-      undefined  // No worktree branch
+      undefined, // No worktree branch
+      true       // Skip worktree creation
     );
 
     // If no result was sent, ensure we have a completion message

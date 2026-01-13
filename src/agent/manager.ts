@@ -30,6 +30,7 @@ export interface ExecutionResult {
  * @param resumeSessionId Optional session ID to resume a previous conversation
  * @param existingWorktreePath Optional worktree path when resuming a session
  * @param existingWorktreeBranch Optional worktree branch when resuming a session
+ * @param skipWorktree Optional flag to skip worktree creation even if configured
  * @returns The execution result containing session ID and worktree path
  */
 export async function executeClaudePrompt(
@@ -39,7 +40,8 @@ export async function executeClaudePrompt(
   channelSettings: ChannelSettings,
   resumeSessionId?: string,
   existingWorktreePath?: string,
-  existingWorktreeBranch?: string
+  existingWorktreeBranch?: string,
+  skipWorktree?: boolean
 ): Promise<ExecutionResult> {
   // Save the original working directory
   const originalCwd = process.cwd();
@@ -53,8 +55,8 @@ export async function executeClaudePrompt(
     console.log(`[Agent] Target working directory: ${workingPath}`);
 
     // Handle worktree creation for new conversations
-    if (!resumeSessionId && channelSettings.workTreeBase) {
-      // This is a new conversation and worktrees are enabled
+    if (!resumeSessionId && channelSettings.workTreeBase && !skipWorktree) {
+      // This is a new conversation and worktrees are enabled (and not skipped)
       const workTreeBase = channelSettings.workTreeBase === '../'
         ? path.resolve(workingPath, '..')
         : path.resolve(channelSettings.workTreeBase);
