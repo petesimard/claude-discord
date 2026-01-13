@@ -3,7 +3,7 @@ import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed,
 import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
-import { getThreadSession } from './agent/sessions.js';
+import { getThreadSession, loadSessions } from './agent/sessions.js';
 import { removeWorktree } from './utils/worktree.js';
 
 // Create Discord client with necessary intents
@@ -139,6 +139,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   console.log(`✅ Bot is ready! Logged in as ${readyClient.user.tag}`);
   console.log(`🤖 Claude Code agent is ready to receive commands`);
   console.log(`📨 Message event listeners: ${client.listenerCount(Events.MessageCreate)}`);
+
+  // Load saved sessions from disk
+  loadSessions();
 
   // Send welcome message to all configured channels
   const channelsToNotify = Array.from(config.channelMappings.keys());

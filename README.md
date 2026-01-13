@@ -256,8 +256,9 @@ Each conversation with Claude Code has its own **session**:
 - **Fresh Start**: Every `/claude` command starts a new conversation with no memory of previous interactions
 - **Forum Threads**: When configured, each session gets its own forum thread for organization
 - **Continue via @Mention**: In forum threads, @mention the bot to continue the conversation
-- **Session Persistence**: Sessions persist in their forum threads until the bot restarts
+- **Session Persistence**: Sessions are automatically saved to `.discord-sessions.json` and restored when the bot restarts
 - **Thread Mapping**: Each forum thread is linked to a specific Claude Code session
+- **Worktree Info**: Session data includes worktree paths and branches, so conversations continue in the correct worktree after restarts
 
 **Example (with Forum Channel):**
 
