@@ -1,10 +1,10 @@
 import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel, ButtonBuilder, ButtonStyle, ActionRowBuilder, Message } from 'discord.js';
 import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed, ChannelSettings } from './utils/config.js';
-import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
+import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
-import { VcsType } from './utils/vcs.js';
 import { getThreadSession, loadSessions } from './agent/sessions.js';
 import { removeWorktree } from './utils/worktree.js';
+import { commitAndGetInfo } from './utils/git.js';
 import {
   enqueueRequest,
   dequeueRequestById,
@@ -202,9 +202,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // Handle button clicks
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('commit_')) {
-      // Extract session ID and VCS type from customId: commit_${sessionId}_${vcsType}
+      // Extract session ID from customId: commit_${sessionId}_${vcsType}
       const parts = interaction.customId.split('_');
-      const vcsType = parts[parts.length - 1] as VcsType;
       const sessionId = parts.slice(1, -1).join('_');
 
       // Defer the reply immediately
@@ -271,24 +270,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (success) {
-        // Get commit result for display
-        const commitResult = await execAsync('git log -1 --pretty=format:"%H%n%s%n%b"', { cwd: workingPath });
+        // Get commit hash
+        const commitResult = await execAsync('git log -1 --pretty=format:"%H"', { cwd: workingPath });
+        const commitHash = commitResult.stdout.trim();
 
-        // Create success embed
-        const embed = new EmbedBuilder()
-          .setColor(0x00ff00) // Green
-          .setTitle('✅ Changes Committed to Git')
-          .setDescription('```\n' + (commitResult.stdout || 'Commit successful').substring(0, 3900) + '\n```')
-          .addFields(
-            { name: '💬 Commit Message', value: commitMessage.substring(0, 1024), inline: false },
-            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
-          )
-          .setFooter({ text: 'Claude Code Agent' })
-          .setTimestamp();
+        // Get the original message and embed
+        const originalMessage = interaction.message;
+        const originalEmbed = originalMessage?.embeds[0];
 
-        const commitButton = sessionId ? createCommitButton(sessionId, vcsType) : undefined;
-        const components = commitButton ? [commitButton] : [];
-        await interaction.editReply({ content: '', embeds: [embed], components });
+        if (originalEmbed) {
+          // Update the original embed by adding commit info field
+          const updatedEmbed = EmbedBuilder.from(originalEmbed);
+          updatedEmbed.addFields({
+            name: '✅ Committed',
+            value: `\`${commitHash.substring(0, 7)}\` ${commitMessage}`,
+            inline: false
+          });
+
+          // Create restore button instead of commit button
+          const restoreButton = new ButtonBuilder()
+            .setCustomId(`restore_${commitHash}_${sessionId}`)
+            .setLabel('Restore to this point')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('⏮️');
+
+          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+
+          // Update the original message with the new embed and button
+          await originalMessage.edit({ embeds: [updatedEmbed], components: [actionRow] });
+          await interaction.editReply({ content: '✅ Changes committed successfully!', embeds: [], components: [] });
+        } else {
+          // Fallback: create new embed if original not found
+          const embed = new EmbedBuilder()
+            .setColor(0x00ff00) // Green
+            .setTitle('✅ Changes Committed to Git')
+            .setDescription(`\`${commitHash.substring(0, 7)}\` ${commitMessage}`)
+            .addFields(
+              { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+            )
+            .setFooter({ text: 'Claude Code Agent' })
+            .setTimestamp();
+
+          const restoreButton = new ButtonBuilder()
+            .setCustomId(`restore_${commitHash}_${sessionId}`)
+            .setLabel('Restore to this point')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('⏮️');
+
+          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+
+          await interaction.editReply({ content: '', embeds: [embed], components: [actionRow] });
+        }
       } else {
         // Handle error
         const errorMessage = 'Failed to commit changes';
@@ -521,6 +553,78 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.update({ embeds: [embed], components: [] });
       }
+    } else if (interaction.customId.startsWith('restore_')) {
+      // Handle restore to commit
+      // Custom ID format: restore_${commitHash}_${sessionId}
+      const parts = interaction.customId.split('_');
+      const commitHash = parts[1];
+
+      // Defer the reply immediately
+      await interaction.deferReply();
+
+      // Use unified permission checker
+      const permissions = getChannelPermissions(interaction.channel!);
+      if (!permissions) {
+        await interaction.editReply({
+          content: '❌ This bot is not configured for this channel.',
+        });
+        return;
+      }
+
+      const workingPath = permissions.workingPath;
+      const startTime = Date.now();
+
+      try {
+        // Send initial status
+        await interaction.editReply('⏳ Restoring to commit...');
+
+        // Reset to the specified commit
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+
+        // Use git reset --hard to restore to the commit
+        await execAsync(`git reset --hard ${commitHash}`, { cwd: workingPath });
+
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        // Get commit info for display
+        const commitInfo = await execAsync(`git log -1 --pretty=format:"%H%n%s" ${commitHash}`, { cwd: workingPath });
+        const [hash, subject] = commitInfo.stdout.split('\n');
+
+        // Create success embed
+        const embed = new EmbedBuilder()
+          .setColor(0x00ff00) // Green
+          .setTitle('✅ Restored to Commit')
+          .setDescription(`Successfully reset the worktree to the specified commit.\n\n**All changes after this commit have been discarded.**`)
+          .addFields(
+            { name: '📝 Commit', value: `\`${hash.substring(0, 7)}\` ${subject}`, inline: false },
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+
+      } catch (error) {
+        // Handle any errors during execution
+        console.error('Error restoring to commit:', error);
+
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        const embed = new EmbedBuilder()
+          .setColor(0xff0000) // Red
+          .setTitle('❌ Failed to Restore')
+          .setDescription('```\n' + errorMessage.substring(0, 3900) + '\n```')
+          .addFields(
+            { name: '⏱️ Duration', value: `${duration}s`, inline: true }
+          )
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ content: '', embeds: [embed] });
+      }
     }
     return;
   }
@@ -623,8 +727,40 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, agentMessage.content, duration, agentMessage.worktreePath, agentMessage.worktreeBranch, permissions.settings.branchUrl);
-            const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
-            const components = actionButtons ? [actionButtons] : [];
+
+            // Check if autoCommit is enabled and we have a Git repository
+            let commitInfo: { hash: string; message: string } | null = null;
+            if (permissions.settings.autoCommit && agentMessage.vcsType === 'git') {
+              console.log('[Bot] Auto-commit enabled, committing changes...');
+              commitInfo = await commitAndGetInfo(permissions.workingPath);
+              if (commitInfo) {
+                console.log(`[Bot] Auto-committed: ${commitInfo.hash.substring(0, 7)} - ${commitInfo.message}`);
+                // Add commit info to the embed
+                embed.addFields({
+                  name: '✅ Auto-Committed',
+                  value: `\`${commitInfo.hash.substring(0, 7)}\` ${commitInfo.message}`,
+                  inline: false
+                });
+              }
+            }
+
+            // Create action buttons (or restore button if committed)
+            let components: any[] = [];
+            if (commitInfo) {
+              // Show restore button if changes were committed
+              const restoreButton = new ButtonBuilder()
+                .setCustomId(`restore_${commitInfo.hash}_${agentMessage.sessionId}`)
+                .setLabel('Restore to this point')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('⏮️');
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              components = [actionRow];
+            } else {
+              // Show regular action buttons
+              const actionButtons = agentMessage.sessionId ? createActionButtons(agentMessage.sessionId, agentMessage.vcsType, agentMessage.worktreeBranch) : undefined;
+              components = actionButtons ? [actionButtons] : [];
+            }
+
             await statusMessage.edit({ embeds: [embed], components });
           } else if (agentMessage.type === 'error') {
             // Error occurred - use embed

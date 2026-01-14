@@ -3,6 +3,7 @@ import { executeClaudePrompt, AgentMessage } from '../agent/manager.js';
 import { getChannelSettings, isChannelAllowed } from '../utils/config.js';
 import { VcsType, getCommitButtonLabel } from '../utils/vcs.js';
 import { setThreadSession } from '../agent/sessions.js';
+import { commitAndGetInfo } from '../utils/git.js';
 import * as path from 'path';
 
 // Define the /claude command structure
@@ -208,8 +209,39 @@ export async function handleClaudeCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
-            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
-            const components = actionButtons ? [actionButtons] : [];
+
+            // Check if autoCommit is enabled and we have a Git repository
+            let commitInfo: { hash: string; message: string } | null = null;
+            if (channelSettings.autoCommit && message.vcsType === 'git' && message.worktreePath) {
+              console.log('[Claude] Auto-commit enabled, committing changes...');
+              commitInfo = await commitAndGetInfo(message.worktreePath);
+              if (commitInfo) {
+                console.log(`[Claude] Auto-committed: ${commitInfo.hash.substring(0, 7)} - ${commitInfo.message}`);
+                // Add commit info to the embed
+                embed.addFields({
+                  name: '✅ Auto-Committed',
+                  value: `\`${commitInfo.hash.substring(0, 7)}\` ${commitInfo.message}`,
+                  inline: false
+                });
+              }
+            }
+
+            // Create action buttons (or restore button if committed)
+            let components: any[] = [];
+            if (commitInfo) {
+              // Show restore button if changes were committed
+              const restoreButton = new ButtonBuilder()
+                .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
+                .setLabel('Restore to this point')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('⏮️');
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              components = [actionRow];
+            } else {
+              // Show regular action buttons
+              const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+              components = actionButtons ? [actionButtons] : [];
+            }
 
             if (thread && statusMessage) {
               await statusMessage.edit({ embeds: [embed], components });
@@ -384,8 +416,40 @@ export async function handleClaudeContinueCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration, message.worktreePath, message.worktreeBranch, channelSettings.branchUrl);
-            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
-            const components = actionButtons ? [actionButtons] : [];
+
+            // Check if autoCommit is enabled and we have a Git repository
+            let commitInfo: { hash: string; message: string } | null = null;
+            if (channelSettings.autoCommit && message.vcsType === 'git' && message.worktreePath) {
+              console.log('[ClaudeContinue] Auto-commit enabled, committing changes...');
+              commitInfo = await commitAndGetInfo(message.worktreePath);
+              if (commitInfo) {
+                console.log(`[ClaudeContinue] Auto-committed: ${commitInfo.hash.substring(0, 7)} - ${commitInfo.message}`);
+                // Add commit info to the embed
+                embed.addFields({
+                  name: '✅ Auto-Committed',
+                  value: `\`${commitInfo.hash.substring(0, 7)}\` ${commitInfo.message}`,
+                  inline: false
+                });
+              }
+            }
+
+            // Create action buttons (or restore button if committed)
+            let components: any[] = [];
+            if (commitInfo) {
+              // Show restore button if changes were committed
+              const restoreButton = new ButtonBuilder()
+                .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
+                .setLabel('Restore to this point')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('⏮️');
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              components = [actionRow];
+            } else {
+              // Show regular action buttons
+              const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType, message.worktreeBranch) : undefined;
+              components = actionButtons ? [actionButtons] : [];
+            }
+
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed
@@ -531,8 +595,40 @@ export async function handleClaudeQuickCommand(
             hasResult = true;
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
             const embed = createResultEmbed(prompt, message.content, duration, undefined, undefined, channelSettings.branchUrl);
-            const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType) : undefined;
-            const components = actionButtons ? [actionButtons] : [];
+
+            // Check if autoCommit is enabled and we have a Git repository
+            let commitInfo: { hash: string; message: string } | null = null;
+            if (channelSettings.autoCommit && message.vcsType === 'git') {
+              console.log('[ClaudeQuick] Auto-commit enabled, committing changes...');
+              commitInfo = await commitAndGetInfo(channelSettings.path);
+              if (commitInfo) {
+                console.log(`[ClaudeQuick] Auto-committed: ${commitInfo.hash.substring(0, 7)} - ${commitInfo.message}`);
+                // Add commit info to the embed
+                embed.addFields({
+                  name: '✅ Auto-Committed',
+                  value: `\`${commitInfo.hash.substring(0, 7)}\` ${commitInfo.message}`,
+                  inline: false
+                });
+              }
+            }
+
+            // Create action buttons (or restore button if committed)
+            let components: any[] = [];
+            if (commitInfo) {
+              // Show restore button if changes were committed
+              const restoreButton = new ButtonBuilder()
+                .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
+                .setLabel('Restore to this point')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('⏮️');
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              components = [actionRow];
+            } else {
+              // Show regular action buttons
+              const actionButtons = message.sessionId ? createActionButtons(message.sessionId, message.vcsType) : undefined;
+              components = actionButtons ? [actionButtons] : [];
+            }
+
             await interaction.editReply({ content: '', embeds: [embed], components });
           } else if (message.type === 'error') {
             // Error occurred - use embed

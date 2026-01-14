@@ -7,6 +7,7 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 - 🤖 Execute Claude Code prompts via `/claude` slash command
 - 💬 **Forum-based sessions** - Each conversation gets its own forum thread for organization
 - ✅ **Smart Git commit buttons** - Auto-detects Git repositories and shows commit button
+- ⏮️ **Restore to commit** - After committing, restore your worktree to that exact point with one click
 - 🔗 Session-based conversation context - continue conversations by @mentioning the bot in forum threads
 - 📊 **Live status embeds** - Watch the agent work in real-time with dynamic status updates and full activity log
 - 📥 **Request queue** - Multiple @ mentions are automatically queued and processed sequentially with cancel buttons
@@ -208,6 +209,8 @@ If no forum channel is configured, the bot works in regular text channels. You c
 
 #### Committing Changes (Git)
 
+**Manual Commits:**
+
 Each response includes a commit button **if Git is detected** in your working directory:
 - **"✅ Commit to Git"** - If `.git` directory is found
 - **No button** - If Git is not detected
@@ -216,6 +219,8 @@ Click the button to commit all changes with an auto-generated message:
 
 1. Click the **"✅ Commit to Git"** button on any response
 2. The bot automatically commits all changes
+3. The commit info is added as a field in the result embed
+4. The button changes to **"⏮️ Restore to this point"**
 
 The bot will:
 - Check for uncommitted changes with `git status`
@@ -223,6 +228,55 @@ The bot will:
 - Run `git add -A` to stage all changes
 - Commit with the auto-generated message
 - Add "Co-Authored-By: Claude Sonnet 4.5" to the commit
+- Add the commit info to the original result embed (not a separate message)
+
+**Auto Commits:**
+
+Enable `autoCommit: true` in your channel settings to automatically commit after every message:
+- No manual button click needed
+- Commits happen automatically when tasks complete successfully
+- Commit info appears as `✅ Auto-Committed` field in the result embed
+- Shows **"⏮️ Restore to this point"** button immediately
+
+#### Restoring to a Previous Commit
+
+After successfully committing changes, the "✅ Commit to Git" button changes to **"⏮️ Restore to this point"**. This allows you to revert your worktree to that exact commit if needed.
+
+**How it works:**
+
+1. **After Commit**: The commit button becomes "⏮️ Restore to this point"
+2. **Click to Restore**: Clicking this button runs `git reset --hard <commit-hash>` in your worktree
+3. **Warning**: This **permanently discards** all changes made after that commit
+
+**Example:**
+
+```
+User: @ClaudeBot add a new function
+Bot: ✅ Task Completed
+     I've added the new function...
+     [✅ Commit to Git] (button)
+
+User: (Clicks Commit to Git)
+Bot: ✅ Changes Committed to Git
+     Auto-commit: 1 file modified
+     [⏮️ Restore to this point] (button)   ← Button changed!
+
+User: @ClaudeBot now modify that function
+Bot: ✅ Task Completed
+     I've modified the function...
+
+User: (Realizes the modification was wrong, clicks "Restore to this point")
+Bot: ✅ Restored to Commit
+     Successfully reset the worktree to the specified commit.
+     All changes after this commit have been discarded.
+     📝 Commit: abc123d Auto-commit: 1 file modified
+```
+
+**Use cases:**
+- Undo unwanted changes
+- Return to a known good state
+- Experiment freely knowing you can restore
+- Perfect for worktree-based workflows where you can safely reset
 
 ### How It Works
 
@@ -362,6 +416,7 @@ CHANNEL_MAPPINGS={"1234567890123456789":{"path":"/path/to/project1"},"9876543210
 Each channel's settings object supports:
 - `path`: (Required) The working directory for this channel where Claude Code will execute commands and access files
 - `autoUpdate`: (Optional) Automatically run `git pull` before starting new conversations (default: `false`)
+- `autoCommit`: (Optional) Automatically commit changes after every completed message (default: `false`)
 - `forumChannelId`: (Optional) Forum channel ID where session threads will be created. Get this by right-clicking a forum channel and selecting "Copy ID"
 - `workTreeBase`: (Optional) Base directory for creating Git worktrees (see Git Worktrees section below)
 - `branchUrl`: (Optional) URL template for branch preview links. Use `[branchId]` as a placeholder that will be replaced with the actual branch ID. Example: `"https://[branchId].preview.mysite.com"`
@@ -375,14 +430,17 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project"}}
 # Channel with auto-update enabled
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","autoUpdate":true}}
 
+# Channel with auto-commit enabled
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","autoCommit":true}}
+
 # Channel with worktrees enabled for parallel conversations
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../"}}
 
 # Channel with worktrees and branch preview URLs
 CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/my-project","workTreeBase":"../","branchUrl":"https://[branchId].preview.mysite.com"}}
 
-# Full example with all features: forum threads, auto-update, worktrees, and branch URLs
-CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"forumChannelId":"9999999999","workTreeBase":"../","branchUrl":"https://[branchId].example.com"},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
+# Full example with all features: forum threads, auto-update, auto-commit, worktrees, and branch URLs
+CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"autoCommit":true,"forumChannelId":"9999999999","workTreeBase":"../","branchUrl":"https://[branchId].example.com"},"9876543210":{"path":"/home/user/api-server","autoUpdate":false},"5555555555":{"path":"/home/user/mobile-app"}}
 ```
 
 **Behavior:**
@@ -399,6 +457,13 @@ CHANNEL_MAPPINGS={"1234567890":{"path":"/home/user/web-app","autoUpdate":true,"f
   - Runs `git pull` on the repository
   - Shows status updates in Discord ("🔄 Updating repository..." → "✅ Repository updated")
   - If update fails, shows a warning but continues with the conversation
+- When `autoCommit` is enabled:
+  - Changes are automatically committed after **every** completed message
+  - Generates auto-commit messages (e.g., "Auto-commit: 2 files modified, 1 file added")
+  - Shows commit info as a field in the result embed: `✅ Auto-Committed: abc123d Auto-commit: 2 files modified`
+  - Automatically replaces the "Commit to Git" button with "Restore to this point" button
+  - Works with both manual `/claude` commands and @ mentions
+  - Perfect for worktree workflows where you want a commit history of all changes
 - When `workTreeBase` is configured:
   - Each **new** conversation creates a separate Git worktree with its own branch
   - Allows multiple parallel conversations without conflicts

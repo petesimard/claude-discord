@@ -6,6 +6,7 @@ dotenvConfig();
 export interface ChannelSettings {
   path: string;
   autoUpdate?: boolean; // Auto git pull before new conversations
+  autoCommit?: boolean; // Auto commit changes after every completed message
   forumChannelId?: string; // Forum channel to create session threads in
   workTreeBase?: string; // Base directory for creating worktrees (defaults to ../)
   branchUrl?: string; // URL template for branch links (use [branchId] as placeholder)
@@ -42,6 +43,7 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
           const channelSettings = settings as {
             path: string;
             autoUpdate?: boolean;
+            autoCommit?: boolean;
             forumChannelId?: string | number;
             workTreeBase?: string;
             branchUrl?: string;
@@ -69,6 +71,7 @@ function parseChannelMappings(mappingsJson?: string): Map<string, ChannelSetting
             mappings.set(channelId, {
               path: channelSettings.path,
               autoUpdate: channelSettings.autoUpdate === true,
+              autoCommit: channelSettings.autoCommit === true,
               forumChannelId: forumChannelId,
               workTreeBase: workTreeBase,
               branchUrl: branchUrl
