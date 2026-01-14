@@ -228,6 +228,23 @@ export async function executeClaudePrompt(
         console.log(`[Agent] Session ID: ${sessionId}`);
       }
 
+      // Handle assistant messages (intermediate commentary)
+      if ('type' in message && (message as any).type === 'assistant' && !('result' in message)) {
+        const messageContent = (message as any).message?.content;
+        if (Array.isArray(messageContent)) {
+          // Extract text from content blocks
+          for (const block of messageContent) {
+            if (block.type === 'text' && block.text) {
+              console.log(`[Agent] Assistant message: ${block.text.substring(0, 100)}...`);
+              await onMessage({
+                type: 'status',
+                content: block.text
+              });
+            }
+          }
+        }
+      }
+
       // Handle tool use messages (status updates)
       if ('type' in message && (message as any).type === 'tool_use') {
         const toolName = (message as any).name || 'unknown';

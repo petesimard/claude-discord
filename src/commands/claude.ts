@@ -83,6 +83,7 @@ export async function handleClaudeCommand(
   const startTime = Date.now();
   let thread: any = null;
   let statusMessage: any = null;
+  const statusMessages: string[] = []; // Accumulate status messages
 
   try {
     // Check if we should create a forum thread
@@ -163,14 +164,32 @@ export async function handleClaudeCommand(
       async (message: AgentMessage) => {
         try {
           if (message.type === 'status') {
-            // Update status if it changed
+            // Accumulate status messages
             if (message.content !== lastStatus) {
               lastStatus = message.content;
+              statusMessages.push(message.content);
+
               const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+              // Build the activity log, keeping within Discord limits
+              // Discord embed description max: 4096 chars
+              let activityLog = '';
+              const maxLogLength = 3000; // Leave room for other content
+
+              // Add messages from newest to oldest until we hit the limit
+              for (let i = statusMessages.length - 1; i >= 0; i--) {
+                const entry = `• ${statusMessages[i]}\n`;
+                if (activityLog.length + entry.length > maxLogLength) {
+                  activityLog = `...${activityLog}`; // Indicate there's more
+                  break;
+                }
+                activityLog = entry + activityLog;
+              }
+
               const statusEmbed = new EmbedBuilder()
                 .setColor(0x3498db) // Blue
-                .setTitle(message.content)
-                .setDescription('Processing your request...')
+                .setTitle('🤖 Claude Code Agent Working...')
+                .setDescription(activityLog || 'Processing your request...')
                 .addFields(
                   { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
                   { name: '⏱️ Duration', value: `${duration}s`, inline: true }
@@ -295,6 +314,7 @@ export async function handleClaudeContinueCommand(
   let lastStatus = '';
   let hasResult = false;
   const startTime = Date.now();
+  const statusMessages: string[] = []; // Accumulate status messages
 
   // Get the channel settings (before try block so it's accessible in catch)
   const channelSettings = getChannelSettings(channelId);
@@ -325,20 +345,38 @@ export async function handleClaudeContinueCommand(
       async (message: AgentMessage) => {
         try {
           if (message.type === 'status') {
-            // Update status if it changed
+            // Accumulate status messages
             if (message.content !== lastStatus) {
               lastStatus = message.content;
+              statusMessages.push(message.content);
+
               const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+              // Build the activity log, keeping within Discord limits
+              let activityLog = '';
+              const maxLogLength = 3000;
+
+              // Add messages from newest to oldest until we hit the limit
+              for (let i = statusMessages.length - 1; i >= 0; i--) {
+                const entry = `• ${statusMessages[i]}\n`;
+                if (activityLog.length + entry.length > maxLogLength) {
+                  activityLog = `...${activityLog}`;
+                  break;
+                }
+                activityLog = entry + activityLog;
+              }
+
               const statusEmbed = new EmbedBuilder()
                 .setColor(0x3498db) // Blue
-                .setTitle(message.content)
-                .setDescription('Processing your request...')
+                .setTitle('🤖 Claude Code Agent Working...')
+                .setDescription(activityLog || 'Processing your request...')
                 .addFields(
                   { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
                   { name: '⏱️ Duration', value: `${duration}s`, inline: true }
                 )
                 .setFooter({ text: 'Claude Code Agent' })
                 .setTimestamp();
+
               await interaction.editReply({ embeds: [statusEmbed] });
             }
           } else if (message.type === 'result') {
@@ -432,6 +470,7 @@ export async function handleClaudeQuickCommand(
   let lastStatus = '';
   let hasResult = false;
   const startTime = Date.now();
+  const statusMessages: string[] = []; // Accumulate status messages
 
   try {
     // Send initial status embed
@@ -453,14 +492,31 @@ export async function handleClaudeQuickCommand(
       async (message: AgentMessage) => {
         try {
           if (message.type === 'status') {
-            // Update status if it changed
+            // Accumulate status messages
             if (message.content !== lastStatus) {
               lastStatus = message.content;
+              statusMessages.push(message.content);
+
               const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+              // Build the activity log, keeping within Discord limits
+              let activityLog = '';
+              const maxLogLength = 3000;
+
+              // Add messages from newest to oldest until we hit the limit
+              for (let i = statusMessages.length - 1; i >= 0; i--) {
+                const entry = `• ${statusMessages[i]}\n`;
+                if (activityLog.length + entry.length > maxLogLength) {
+                  activityLog = `...${activityLog}`;
+                  break;
+                }
+                activityLog = entry + activityLog;
+              }
+
               const statusEmbed = new EmbedBuilder()
                 .setColor(0x3498db) // Blue
-                .setTitle(message.content)
-                .setDescription('Processing your request...')
+                .setTitle('🤖 Claude Code Agent Working...')
+                .setDescription(activityLog || 'Processing your request...')
                 .addFields(
                   { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
                   { name: '⏱️ Duration', value: `${duration}s`, inline: true }
