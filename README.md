@@ -8,7 +8,8 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 - 💬 **Forum-based sessions** - Each conversation gets its own forum thread for organization
 - ✅ **Smart Git commit buttons** - Auto-detects Git repositories and shows commit button
 - 🔗 Session-based conversation context - continue conversations by @mentioning the bot in forum threads
-- 📊 **Live status embeds** - Watch the agent work in real-time with dynamic status updates
+- 📊 **Live status embeds** - Watch the agent work in real-time with dynamic status updates and full activity log
+- 📥 **Request queue** - Multiple @ mentions are automatically queued and processed sequentially with cancel buttons
 - 🛠️ Full access to Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch)
 - ⚡ Streaming responses with automatic embed updates
 - 🎨 Rich Discord embeds with color-coded results (blue while working, green on success, red on error)
@@ -282,6 +283,50 @@ Bot: ✅ Changes Committed to Git
      💬 Commit Message: Auto-commit: 5 files modified
      [✅ Commit to Git] (button)
 ```
+
+### Request Queue
+
+When you @mention the bot while it's already processing another request, your new request is automatically queued:
+
+**How it works:**
+
+1. **First Request**: The bot starts processing immediately
+2. **Second Request** (while first is processing): Shows "⏳ Request Queued" with:
+   - Queue position (e.g., "1 of 1")
+   - Cancel button to remove from queue
+3. **Automatic Processing**: When the current request finishes, the next queued request starts automatically
+4. **FIFO Order**: Requests are processed in the order they were received
+
+**Example:**
+
+```
+User: @ClaudeBot read the database.py file
+Bot: 🤖 Claude Code Agent Working...
+     • Let me read the file first...
+     • 🔄 Working... (using Read tool)
+
+User: @ClaudeBot also check the models.py file  ← (while still processing)
+Bot: ⏳ Request Queued
+     Your request is in the queue and will be processed when the current request completes.
+     📝 Prompt: also check the models.py file
+     📊 Queue Position: 1 of 1
+     [❌ Cancel Request] (button)
+
+(First request completes)
+
+Bot: ✅ Task Completed
+     I've read database.py and found...
+     [✅ Commit to Git] (button)
+
+(Automatically starts second request)
+
+Bot: 🤖 Claude Code Agent Working...
+     • Let me read the models.py file...
+```
+
+**Canceling Queued Requests:**
+
+Click the "❌ Cancel Request" button on a queued request to remove it from the queue. Note: You can only cancel requests that haven't started processing yet.
 
 ## Configuration Options
 

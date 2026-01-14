@@ -1,10 +1,20 @@
-import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel } from 'discord.js';
+import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel, ButtonBuilder, ButtonStyle, ActionRowBuilder } from 'discord.js';
 import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed, ChannelSettings } from './utils/config.js';
 import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { VcsType } from './utils/vcs.js';
 import { getThreadSession, loadSessions } from './agent/sessions.js';
 import { removeWorktree } from './utils/worktree.js';
+import {
+  enqueueRequest,
+  dequeueRequestById,
+  getNextRequest,
+  setCurrentRequest,
+  isProcessing,
+  getQueuePosition,
+  getQueueSize,
+  type QueuedRequest
+} from './agent/queue.js';
 
 // Create Discord client with necessary intents
 export const client = new Client({
@@ -483,33 +493,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.editReply({ content: '', embeds: [embed] });
       }
+    } else if (interaction.customId.startsWith('cancel_queue_')) {
+      // Handle queue cancellation
+      const requestId = interaction.customId.replace('cancel_queue_', '');
+
+      // Try to remove the request from the queue
+      const removed = dequeueRequestById(requestId);
+
+      if (removed) {
+        const embed = new EmbedBuilder()
+          .setColor(0xff6b6b) // Red/pink
+          .setTitle('❌ Request Cancelled')
+          .setDescription('Your queued request has been cancelled and removed from the queue.')
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.update({ embeds: [embed], components: [] });
+        console.log(`[Queue] Request ${requestId} cancelled by user`);
+      } else {
+        // Request might already be processing or completed
+        const embed = new EmbedBuilder()
+          .setColor(0xffa500) // Orange
+          .setTitle('⚠️ Cannot Cancel')
+          .setDescription('This request is either already being processed or has been completed.')
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.update({ embeds: [embed], components: [] });
+      }
     }
     return;
   }
 });
 
-// Handle messages (for @mentions in forum threads to continue conversations)
-client.on(Events.MessageCreate, async (message) => {
-  //console.log(`[Bot] 🔔 MessageCreate event fired! Channel: ${message.channel.id}, Author: ${message.author.tag}, Bot: ${message.author.bot}`);
-
-  // Ignore bot messages
-  if (message.author.bot) {
-    //console.log(`[Bot] Ignoring bot message`);
-    return;
-  }
-
-  // Check if bot was mentioned
-  if (!message.mentions.has(client.user!)) {
-    return;
-  }
-
-  // Check if message is in a forum thread
-  if (!message.channel.isThread()) {
-    console.log(`[Bot] Message is not in a thread, ignoring`);
-    return;
-  }
-
-  console.log(`[Bot] Checking for session in thread ${message.channel.id}`);
+/**
+ * Process a queued @ mention request
+ */
+async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
+  const { message, prompt } = queuedReq;
 
   // Use unified permission checker
   const permissions = getChannelPermissions(message.channel);
@@ -527,38 +548,12 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  console.log(`[Bot] ✅ Found session ${sessionData.sessionId} for thread ${message.channel.id} (source channel: ${sessionData.sourceChannelId})`);
-
-  // Verify the thread is in the expected forum channel
-  const parentChannel = message.channel.parent;
-  if (!parentChannel) {
-    console.log(`[Bot] ❌ Thread ${message.channel.id} has no parent channel`);
-    await message.reply('⚠️ Error: thread has no parent channel.');
-    return;
-  }
-
-  console.log(`[Bot] Thread parent channel: ${parentChannel.id}, Expected forum channel: ${permissions.settings.forumChannelId}`);
-
-  if (permissions.settings.forumChannelId && parentChannel.id !== permissions.settings.forumChannelId) {
-    console.log(`[Bot] ❌ Thread parent ${parentChannel.id} does not match expected forum channel ${permissions.settings.forumChannelId}`);
-    await message.reply('⚠️ This thread is not in the correct forum channel.');
-    return;
-  }
-
-  console.log(`[Bot] ✅ Thread is in the correct forum channel`);
-
-  // Extract the prompt (remove bot mention)
-  const prompt = message.content.replace(/<@!?\d+>/g, '').trim();
-  if (!prompt) {
-    await message.reply('Please provide a prompt along with the mention.');
-    return;
-  }
-
-  console.log(`[Bot] Continuing session ${sessionData.sessionId} in thread ${message.channel.id} with prompt: ${prompt}`);
+  console.log(`[Bot] ✅ Processing queued request ${queuedReq.id} for session ${sessionData.sessionId}`);
 
   let lastStatus = '';
   let hasResult = false;
   const startTime = Date.now();
+  const statusMessages: string[] = [];
 
   try {
     // Send initial status embed
@@ -580,20 +575,37 @@ client.on(Events.MessageCreate, async (message) => {
       async (agentMessage: AgentMessage) => {
         try {
           if (agentMessage.type === 'status') {
-            // Update status if it changed
+            // Accumulate status messages
             if (agentMessage.content !== lastStatus) {
               lastStatus = agentMessage.content;
+              statusMessages.push(agentMessage.content);
+
               const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+              // Build the activity log
+              let activityLog = '';
+              const maxLogLength = 3000;
+
+              for (let i = statusMessages.length - 1; i >= 0; i--) {
+                const entry = `• ${statusMessages[i]}\n`;
+                if (activityLog.length + entry.length > maxLogLength) {
+                  activityLog = `...${activityLog}`;
+                  break;
+                }
+                activityLog = entry + activityLog;
+              }
+
               const statusEmbed = new EmbedBuilder()
                 .setColor(0x3498db) // Blue
-                .setTitle(agentMessage.content)
-                .setDescription('Processing your request...')
+                .setTitle('🤖 Claude Code Agent Working...')
+                .setDescription(activityLog || 'Processing your request...')
                 .addFields(
                   { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
                   { name: '⏱️ Duration', value: `${duration}s`, inline: true }
                 )
                 .setFooter({ text: 'Claude Code Agent' })
                 .setTimestamp();
+
               await statusMessage.edit({ embeds: [statusEmbed] });
             }
           } else if (agentMessage.type === 'result') {
@@ -648,10 +660,121 @@ client.on(Events.MessageCreate, async (message) => {
         permissions.settings.branchUrl
       );
       await message.reply({ embeds: [embed] });
-    } catch (discordError) {
-      console.error('Failed to send error message to Discord:', discordError);
+    } catch (replyError) {
+      console.error('Failed to send error embed:', replyError);
+      await message.reply(`❌ Error: ${errorMessage}`);
+    }
+  } finally {
+    // Mark this request as complete and process next queued request
+    setCurrentRequest(null);
+    const nextRequest = getNextRequest();
+    if (nextRequest) {
+      console.log(`[Queue] Processing next queued request ${nextRequest.id}`);
+      setCurrentRequest(nextRequest);
+      await processQueuedRequest(nextRequest);
+    } else {
+      console.log(`[Queue] No more requests in queue`);
     }
   }
+}
+
+// Handle messages (for @mentions in forum threads to continue conversations)
+client.on(Events.MessageCreate, async (message) => {
+  // Ignore bot messages
+  if (message.author.bot) {
+    return;
+  }
+
+  // Check if bot was mentioned
+  if (!message.mentions.has(client.user!)) {
+    return;
+  }
+
+  // Check if message is in a forum thread
+  if (!message.channel.isThread()) {
+    console.log(`[Bot] Message is not in a thread, ignoring`);
+    return;
+  }
+
+  console.log(`[Bot] Checking for session in thread ${message.channel.id}`);
+
+  // Use unified permission checker
+  const permissions = getChannelPermissions(message.channel);
+  if (!permissions) {
+    console.log(`[Bot] ❌ No session or permissions found for thread ${message.channel.id}`);
+    await message.reply('⚠️ No session found for this thread. Please start a new conversation with `/claude` in a configured channel.');
+    return;
+  }
+
+  // Get the session data to get the session ID
+  const sessionData = getThreadSession(message.channel.id);
+  if (!sessionData) {
+    console.log(`[Bot] ❌ No session found for thread ${message.channel.id}`);
+    await message.reply('⚠️ No session found for this thread. Please start a new conversation with `/claude` in a configured channel.');
+    return;
+  }
+
+  console.log(`[Bot] ✅ Found session ${sessionData.sessionId} for thread ${message.channel.id}`);
+
+  // Verify the thread is in the expected forum channel
+  const parentChannel = message.channel.parent;
+  if (!parentChannel) {
+    console.log(`[Bot] ❌ Thread ${message.channel.id} has no parent channel`);
+    await message.reply('⚠️ Error: thread has no parent channel.');
+    return;
+  }
+
+  if (permissions.settings.forumChannelId && parentChannel.id !== permissions.settings.forumChannelId) {
+    console.log(`[Bot] ❌ Thread parent ${parentChannel.id} does not match expected forum channel`);
+    await message.reply('⚠️ This thread is not in the correct forum channel.');
+    return;
+  }
+
+  // Extract the prompt (remove bot mention)
+  const prompt = message.content.replace(/<@!?\d+>/g, '').trim();
+  if (!prompt) {
+    await message.reply('Please provide a prompt along with the mention.');
+    return;
+  }
+
+  // Check if a request is currently being processed
+  if (isProcessing()) {
+    console.log(`[Queue] Request already in progress, queueing this request`);
+
+    // Add this request to the queue
+    const queuedReq = enqueueRequest(message, prompt);
+    const position = getQueuePosition(queuedReq.id);
+
+    // Create cancel button
+    const cancelButton = new ButtonBuilder()
+      .setCustomId(`cancel_queue_${queuedReq.id}`)
+      .setLabel('Cancel Request')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('❌');
+
+    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(cancelButton);
+
+    // Send queued status embed
+    const queueEmbed = new EmbedBuilder()
+      .setColor(0xffa500) // Orange
+      .setTitle('⏳ Request Queued')
+      .setDescription(`Your request is in the queue and will be processed when the current request completes.`)
+      .addFields(
+        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
+        { name: '📊 Queue Position', value: `${position} of ${getQueueSize()}`, inline: true }
+      )
+      .setFooter({ text: 'Claude Code Agent' })
+      .setTimestamp();
+
+    await message.reply({ embeds: [queueEmbed], components: [actionRow] });
+    return;
+  }
+
+  // No request in progress, process immediately
+  console.log(`[Bot] No request in progress, processing immediately`);
+  const queuedReq = { id: `immediate-${Date.now()}`, message, prompt, timestamp: Date.now() };
+  setCurrentRequest(queuedReq);
+  await processQueuedRequest(queuedReq);
 });
 
 // Error handling
