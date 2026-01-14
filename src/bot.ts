@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel, ButtonBuilder, ButtonStyle, ActionRowBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Events, EmbedBuilder, Channel, ButtonBuilder, ButtonStyle, ActionRowBuilder, Message } from 'discord.js';
 import { config, getWorkingPathForChannel, getChannelSettings, isChannelAllowed, ChannelSettings } from './utils/config.js';
 import { handleClaudeCommand, handleClaudeContinueCommand, handleClaudeQuickCommand, createCommitButton, createActionButtons, createResultEmbed, createErrorEmbed, truncateMessage } from './commands/claude.js';
 import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
@@ -556,7 +556,9 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
   const statusMessages: string[] = [];
 
   try {
-    // Send initial status embed
+    // Use the existing queue message if available, otherwise create a new one
+    let statusMessage: Message;
+
     const initialEmbed = new EmbedBuilder()
       .setColor(0x3498db) // Blue
       .setTitle('⏳ Resuming Claude Code Session...')
@@ -567,7 +569,15 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
       .setFooter({ text: 'Claude Code Agent' })
       .setTimestamp();
 
-    let statusMessage = await message.reply({ embeds: [initialEmbed] });
+    if (queuedReq.queueMessage) {
+      // Reuse the queue status message
+      statusMessage = queuedReq.queueMessage;
+      await statusMessage.edit({ embeds: [initialEmbed], components: [] });
+      console.log(`[Bot] Reusing queue message for processing`);
+    } else {
+      // Create a new reply (for immediate processing)
+      statusMessage = await message.reply({ embeds: [initialEmbed] });
+    }
 
     // Execute the prompt with the existing session ID and worktree
     await executeClaudePrompt(
@@ -741,8 +751,21 @@ client.on(Events.MessageCreate, async (message) => {
   if (isProcessing()) {
     console.log(`[Queue] Request already in progress, queueing this request`);
 
-    // Add this request to the queue
-    const queuedReq = enqueueRequest(message, prompt);
+    // Send queued status embed first
+    const queueEmbed = new EmbedBuilder()
+      .setColor(0xffa500) // Orange
+      .setTitle('⏳ Request Queued')
+      .setDescription(`Your request is in the queue and will be processed when the current request completes.`)
+      .addFields(
+        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
+      )
+      .setFooter({ text: 'Claude Code Agent' })
+      .setTimestamp();
+
+    const queueMessage = await message.reply({ embeds: [queueEmbed] });
+
+    // Add this request to the queue with the queue message
+    const queuedReq = enqueueRequest(message, prompt, queueMessage);
     const position = getQueuePosition(queuedReq.id);
 
     // Create cancel button
@@ -754,19 +777,13 @@ client.on(Events.MessageCreate, async (message) => {
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(cancelButton);
 
-    // Send queued status embed
-    const queueEmbed = new EmbedBuilder()
-      .setColor(0xffa500) // Orange
-      .setTitle('⏳ Request Queued')
-      .setDescription(`Your request is in the queue and will be processed when the current request completes.`)
-      .addFields(
-        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
-        { name: '📊 Queue Position', value: `${position} of ${getQueueSize()}`, inline: true }
-      )
-      .setFooter({ text: 'Claude Code Agent' })
-      .setTimestamp();
+    // Update the embed with position and cancel button
+    queueEmbed.data.fields = [
+      { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
+      { name: '📊 Queue Position', value: `${position} of ${getQueueSize()}`, inline: true }
+    ];
 
-    await message.reply({ embeds: [queueEmbed], components: [actionRow] });
+    await queueMessage.edit({ embeds: [queueEmbed], components: [actionRow] });
     return;
   }
 

@@ -10,6 +10,7 @@ export interface QueuedRequest {
   message: Message;
   prompt: string;
   timestamp: number;
+  queueMessage?: Message; // The message showing queue status (to be reused for processing)
 }
 
 // Queue of pending @ mention requests
@@ -27,14 +28,18 @@ function generateRequestId(): string {
 
 /**
  * Add a request to the queue
+ * @param message The Discord message that triggered the request
+ * @param prompt The prompt to execute
+ * @param queueMessage Optional message showing queue status (to be reused for processing)
  * @returns The queued request object
  */
-export function enqueueRequest(message: Message, prompt: string): QueuedRequest {
+export function enqueueRequest(message: Message, prompt: string, queueMessage?: Message): QueuedRequest {
   const queuedRequest: QueuedRequest = {
     id: generateRequestId(),
     message,
     prompt,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    queueMessage
   };
 
   requestQueue.push(queuedRequest);

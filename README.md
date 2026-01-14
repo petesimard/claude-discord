@@ -294,7 +294,7 @@ When you @mention the bot while it's already processing another request, your ne
 2. **Second Request** (while first is processing): Shows "⏳ Request Queued" with:
    - Queue position (e.g., "1 of 1")
    - Cancel button to remove from queue
-3. **Automatic Processing**: When the current request finishes, the next queued request starts automatically
+3. **Automatic Processing**: When the current request finishes, the queued message transitions to "⏳ Resuming Claude Code Session..." (same message, updated embed)
 4. **FIFO Order**: Requests are processed in the order they were received
 
 **Example:**
@@ -318,9 +318,15 @@ Bot: ✅ Task Completed
      I've read database.py and found...
      [✅ Commit to Git] (button)
 
-(Automatically starts second request)
+(Queue message automatically transitions - same message, updated)
 
-Bot: 🤖 Claude Code Agent Working...
+Bot: ⏳ Resuming Claude Code Session...       ← Same message as queue status
+     Continuing the previous conversation...
+     📝 Prompt: also check the models.py file
+
+(Then starts processing)
+
+Bot: 🤖 Claude Code Agent Working...          ← Still the same message
      • Let me read the models.py file...
 ```
 
