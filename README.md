@@ -207,6 +207,72 @@ If no forum channel is configured, the bot works in regular text channels. You c
 /claude-continue abc123def456 now find all places that call it
 ```
 
+#### Cancelling Requests
+
+While the bot is processing your request, you can cancel it by clicking the **"🛑 Cancel"** button that appears in the status message.
+
+**How it works:**
+
+1. While the bot is working, a red "🛑 Cancel" button is displayed
+2. Click the button to immediately cancel the request
+3. The bot will stop processing and update the status
+4. **If auto-commit is enabled:** Any uncommitted changes made during the request will be automatically reverted to the previous commit
+5. **If auto-commit is disabled:** The request is cancelled, but any partial changes remain in your working directory
+
+**Auto-Commit Revert Behavior:**
+
+When you cancel a request with auto-commit enabled:
+- The bot runs `git reset --hard HEAD` to discard all uncommitted changes
+- Your repository is restored to the last committed state
+- The cancellation message shows which commit was restored
+- This ensures your repository stays clean even if the agent was mid-task
+
+**Use Cases:**
+
+- Cancel long-running operations that are taking too long
+- Stop a request that's going in the wrong direction
+- Interrupt a task that you no longer need
+- Quickly revert unwanted changes when using auto-commit
+
+**Note:** The cancel button only appears while the request is actively processing. Once completed, you can use the "⏮️ Restore to this point" button instead to revert to a specific commit.
+
+#### Image Support
+
+The bot supports processing images when you @mention it in a forum thread. Simply attach one or more images along with your message:
+
+**How it works:**
+
+1. @mention the bot in a forum thread
+2. Attach one or more images (PNG, JPG, GIF, etc.)
+3. Optionally include a text prompt (if no text is provided, the bot will use "Please analyze the attached image(s).")
+4. The bot will:
+   - Download the images
+   - Save them to a `.discord-attachments` subdirectory in your working directory
+   - Include references to the images in the prompt sent to Claude
+   - Claude can then analyze the images and respond to your request
+
+**Examples:**
+
+```
+@ClaudeBot what does this error screenshot show?
+[attach screenshot.png]
+
+@ClaudeBot analyze this diagram and explain the architecture
+[attach diagram.png]
+
+@ClaudeBot
+[attach image.png with no text - bot will default to "Please analyze the attached image(s)."]
+```
+
+**Features:**
+- ✅ Supports multiple images in a single message
+- ✅ Preserves original filenames with timestamps to avoid conflicts
+- ✅ Images are saved to `.discord-attachments/` directory
+- ✅ Shows image count in status embeds (e.g., "🖼️ Images: 2 image(s)")
+- ✅ Works with all image formats supported by Discord (PNG, JPG, GIF, WebP, etc.)
+
+**Note:** Images are only supported for @mention interactions in forum threads, not with slash commands.
+
 #### Committing Changes (Git)
 
 **Manual Commits:**

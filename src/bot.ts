@@ -5,6 +5,7 @@ import { executeClaudePrompt, AgentMessage } from './agent/manager.js';
 import { getThreadSession, loadSessions } from './agent/sessions.js';
 import { removeWorktree } from './utils/worktree.js';
 import { commitAndGetInfo } from './utils/git.js';
+import { processImageAttachments, generateImagePromptAddition } from './utils/images.js';
 import {
   enqueueRequest,
   dequeueRequestById,
@@ -24,6 +25,31 @@ export const client = new Client({
     GatewayIntentBits.MessageContent, // Required to read message content and mentions
   ],
 });
+
+// Track cancelled requests by request ID
+const cancelledRequests = new Set<string>();
+
+/**
+ * Mark a request as cancelled
+ */
+function cancelRequest(requestId: string): void {
+  cancelledRequests.add(requestId);
+  console.log(`[Bot] Request ${requestId} marked as cancelled`);
+}
+
+/**
+ * Check if a request was cancelled
+ */
+function isRequestCancelled(requestId: string): boolean {
+  return cancelledRequests.has(requestId);
+}
+
+/**
+ * Clear cancellation flag for a request
+ */
+function clearCancellation(requestId: string): void {
+  cancelledRequests.delete(requestId);
+}
 
 /**
  * Unified permission and settings checker for all handlers.
@@ -553,6 +579,106 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.update({ embeds: [embed], components: [] });
       }
+    } else if (interaction.customId.startsWith('cancel_working_')) {
+      // Handle cancellation of working request
+      const requestId = interaction.customId.replace('cancel_working_', '');
+
+      // Defer the reply immediately
+      await interaction.deferReply();
+
+      console.log(`[Bot] User requested cancellation of request ${requestId}`);
+
+      // Mark the request as cancelled
+      cancelRequest(requestId);
+
+      // Use unified permission checker
+      const permissions = getChannelPermissions(interaction.channel!);
+      if (!permissions) {
+        await interaction.editReply({
+          content: '❌ This bot is not configured for this channel.',
+        });
+        return;
+      }
+
+      // Check if we need to revert (auto-commit enabled)
+      if (permissions.settings.autoCommit) {
+        try {
+          const { exec } = await import('child_process');
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
+
+          // Get the commit hash to revert to (HEAD)
+          const hashResult = await execAsync('git log -1 --pretty=format:"%H"', { cwd: permissions.workingPath });
+          const currentCommit = hashResult.stdout.trim();
+
+          // Get the commit message
+          const commitInfoResult = await execAsync(`git log -1 --pretty=format:"%s" ${currentCommit}`, { cwd: permissions.workingPath });
+          const commitMessage = commitInfoResult.stdout.trim();
+
+          // Reset to discard any uncommitted changes made by the cancelled request
+          await execAsync('git reset --hard HEAD', { cwd: permissions.workingPath });
+
+          console.log(`[Bot] Reverted to commit ${currentCommit.substring(0, 7)} after cancellation`);
+
+          const embed = new EmbedBuilder()
+            .setColor(0xff6b6b) // Red/pink
+            .setTitle('🛑 Request Cancelled')
+            .setDescription('The request has been cancelled and any uncommitted changes have been discarded.')
+            .addFields(
+              { name: '📝 Reverted to', value: `\`${currentCommit.substring(0, 7)}\` ${commitMessage}`, inline: false }
+            )
+            .setFooter({ text: 'Claude Code Agent' })
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [embed] });
+
+          // Update the original status message
+          const originalMessage = interaction.message;
+          if (originalMessage) {
+            const cancelledEmbed = new EmbedBuilder()
+              .setColor(0xff6b6b) // Red/pink
+              .setTitle('🛑 Request Cancelled')
+              .setDescription('This request was cancelled by the user.')
+              .setFooter({ text: 'Claude Code Agent' })
+              .setTimestamp();
+
+            await originalMessage.edit({ embeds: [cancelledEmbed], components: [] });
+          }
+        } catch (error) {
+          console.error('[Bot] Failed to revert after cancellation:', error);
+          const embed = new EmbedBuilder()
+            .setColor(0xff6b6b) // Red/pink
+            .setTitle('🛑 Request Cancelled')
+            .setDescription('The request has been cancelled, but failed to revert changes. You may need to manually reset your repository.')
+            .setFooter({ text: 'Claude Code Agent' })
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [embed] });
+        }
+      } else {
+        // No auto-commit, just cancel
+        const embed = new EmbedBuilder()
+          .setColor(0xff6b6b) // Red/pink
+          .setTitle('🛑 Request Cancelled')
+          .setDescription('The request has been cancelled.')
+          .setFooter({ text: 'Claude Code Agent' })
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+
+        // Update the original status message
+        const originalMessage = interaction.message;
+        if (originalMessage) {
+          const cancelledEmbed = new EmbedBuilder()
+            .setColor(0xff6b6b) // Red/pink
+            .setTitle('🛑 Request Cancelled')
+            .setDescription('This request was cancelled by the user.')
+            .setFooter({ text: 'Claude Code Agent' })
+            .setTimestamp();
+
+          await originalMessage.edit({ embeds: [cancelledEmbed], components: [] });
+        }
+      }
     } else if (interaction.customId.startsWith('restore_')) {
       // Handle restore to commit
       // Custom ID format: restore_${commitHash}_${sessionId}
@@ -634,7 +760,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
  * Process a queued @ mention request
  */
 async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
-  const { message, prompt } = queuedReq;
+  const { message, prompt: originalPrompt } = queuedReq;
 
   // Use unified permission checker
   const permissions = getChannelPermissions(message.channel);
@@ -654,6 +780,40 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
 
   console.log(`[Bot] ✅ Processing queued request ${queuedReq.id} for session ${sessionData.sessionId}`);
 
+  // Get the current commit hash before processing (for potential revert)
+  let previousCommitHash: string | null = null;
+  if (permissions.settings.autoCommit) {
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      const hashResult = await execAsync('git log -1 --pretty=format:"%H"', { cwd: permissions.workingPath });
+      previousCommitHash = hashResult.stdout.trim();
+      console.log(`[Bot] Previous commit hash: ${previousCommitHash?.substring(0, 7)}`);
+    } catch (error) {
+      console.error('[Bot] Failed to get previous commit hash:', error);
+    }
+  }
+
+  // Process image attachments if any
+  let prompt = originalPrompt;
+  const attachments = Array.from(message.attachments.values());
+
+  if (attachments.length > 0) {
+    console.log(`[Bot] Processing ${attachments.length} attachment(s)`);
+    try {
+      const savedImages = await processImageAttachments(attachments, permissions.workingPath);
+      if (savedImages.length > 0) {
+        console.log(`[Bot] Saved ${savedImages.length} image(s)`);
+        // Append image information to the prompt
+        prompt = originalPrompt + generateImagePromptAddition(savedImages);
+      }
+    } catch (error) {
+      console.error('[Bot] Failed to process image attachments:', error);
+      await message.reply('⚠️ Warning: Failed to process some image attachments. Continuing with text prompt only.');
+    }
+  }
+
   let lastStatus = '';
   let hasResult = false;
   const startTime = Date.now();
@@ -668,10 +828,20 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
       .setTitle('⏳ Resuming Claude Code Session...')
       .setDescription('Continuing the previous conversation...')
       .addFields(
-        { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false }
+        { name: '📝 Prompt', value: truncateMessage(originalPrompt || 'Analyzing attached images...', 1024), inline: false }
       )
       .setFooter({ text: 'Claude Code Agent' })
       .setTimestamp();
+
+    // Add image attachment info if present
+    const imageAttachments = attachments.filter(att => att.contentType?.startsWith('image/'));
+    if (imageAttachments.length > 0) {
+      initialEmbed.addFields({
+        name: '🖼️ Images',
+        value: `${imageAttachments.length} image(s) attached`,
+        inline: true
+      });
+    }
 
     if (queuedReq.queueMessage) {
       // Reuse the queue status message
@@ -688,6 +858,12 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
       prompt,
       async (agentMessage: AgentMessage) => {
         try {
+          // Check if request was cancelled
+          if (isRequestCancelled(queuedReq.id)) {
+            console.log(`[Bot] Request ${queuedReq.id} was cancelled, stopping updates`);
+            return;
+          }
+
           if (agentMessage.type === 'status') {
             // Accumulate status messages
             if (agentMessage.content !== lastStatus) {
@@ -714,13 +890,31 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
                 .setTitle('🤖 Claude Code Agent Working...')
                 .setDescription(activityLog || 'Processing your request...')
                 .addFields(
-                  { name: '📝 Prompt', value: truncateMessage(prompt, 1024), inline: false },
+                  { name: '📝 Prompt', value: truncateMessage(originalPrompt || 'Analyzing attached images...', 1024), inline: false },
                   { name: '⏱️ Duration', value: `${duration}s`, inline: true }
                 )
                 .setFooter({ text: 'Claude Code Agent' })
                 .setTimestamp();
 
-              await statusMessage.edit({ embeds: [statusEmbed] });
+              // Add image info if present
+              if (imageAttachments.length > 0) {
+                statusEmbed.addFields({
+                  name: '🖼️ Images',
+                  value: `${imageAttachments.length} image(s)`,
+                  inline: true
+                });
+              }
+
+              // Add cancel button
+              const cancelButton = new ButtonBuilder()
+                .setCustomId(`cancel_working_${queuedReq.id}`)
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🛑');
+
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(cancelButton);
+
+              await statusMessage.edit({ embeds: [statusEmbed], components: [actionRow] });
             }
           } else if (agentMessage.type === 'result') {
             // Final result - use embed
@@ -811,6 +1005,9 @@ async function processQueuedRequest(queuedReq: QueuedRequest): Promise<void> {
       await message.reply(`❌ Error: ${errorMessage}`);
     }
   } finally {
+    // Clean up cancellation flag
+    clearCancellation(queuedReq.id);
+
     // Mark this request as complete and process next queued request
     setCurrentRequest(null);
     const nextRequest = getNextRequest();
@@ -877,10 +1074,20 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   // Extract the prompt (remove bot mention)
-  const prompt = message.content.replace(/<@!?\d+>/g, '').trim();
-  if (!prompt) {
-    await message.reply('Please provide a prompt along with the mention.');
+  let prompt = message.content.replace(/<@!?\d+>/g, '').trim();
+
+  // Check for image attachments
+  const hasImages = message.attachments.size > 0 &&
+    Array.from(message.attachments.values()).some(att => att.contentType?.startsWith('image/'));
+
+  if (!prompt && !hasImages) {
+    await message.reply('Please provide a prompt and/or attach images with the mention.');
     return;
+  }
+
+  // If there's no text but there are images, add a default prompt
+  if (!prompt && hasImages) {
+    prompt = 'Please analyze the attached image(s).';
   }
 
   // Check if a request is currently being processed

@@ -28,3 +28,6 @@ Thumbs.db
 
 # Session data
 .discord-sessions.json
+
+# Discord attachments (downloaded images)
+.discord-attachments/
