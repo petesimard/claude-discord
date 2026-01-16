@@ -56,7 +56,9 @@ async function executeWithCli(
   resumeSessionId?: string
 ): Promise<ExecutionResult> {
   return new Promise((resolve, reject) => {
-    const args = [prompt];
+    // Use --print for non-interactive output
+    // Use --dangerously-skip-permissions to match SDK behavior (permissionMode: 'bypassPermissions')
+    const args = ['--print', '--dangerously-skip-permissions', prompt];
 
     // Add resume flag if we have a session ID
     if (resumeSessionId) {
@@ -71,9 +73,23 @@ async function executeWithCli(
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
+    // Close stdin immediately since we're not sending interactive input
+    // The prompt is passed as a command-line argument
+    if (claudeProcess.stdin) {
+      claudeProcess.stdin.end();
+    }
+
     let sessionId: string | undefined = resumeSessionId;
     let outputBuffer = '';
     let errorBuffer = '';
+    let processTimeout: NodeJS.Timeout | null = null;
+
+    // Set a timeout for the process (10 minutes)
+    processTimeout = setTimeout(() => {
+      console.log('[Agent] CLI process timed out after 10 minutes');
+      claudeProcess.kill('SIGTERM');
+      reject(new Error('Claude CLI process timed out after 10 minutes'));
+    }, 600000);
 
     // Handle stdout (tool outputs, results)
     claudeProcess.stdout.on('data', async (data: Buffer) => {
@@ -107,6 +123,11 @@ async function executeWithCli(
     claudeProcess.on('close', async (code) => {
       console.log(`[Agent] Claude CLI exited with code ${code}`);
 
+      // Clear timeout
+      if (processTimeout) {
+        clearTimeout(processTimeout);
+      }
+
       if (code === 0) {
         // Success - send the output as the result
         await onMessage({
@@ -133,6 +154,12 @@ async function executeWithCli(
     // Handle process errors
     claudeProcess.on('error', async (error) => {
       console.error(`[Agent] Failed to spawn claude CLI:`, error);
+
+      // Clear timeout
+      if (processTimeout) {
+        clearTimeout(processTimeout);
+      }
+
       await onMessage({
         type: 'error',
         content: `❌ Failed to start Claude CLI: ${error.message}\n\nMake sure the 'claude' command is installed and accessible.`
