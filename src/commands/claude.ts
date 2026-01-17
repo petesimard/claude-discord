@@ -551,6 +551,12 @@ export async function handleClaudeQuickCommand(
     await interaction.editReply({ embeds: [initialEmbed] });
 
     // Execute the prompt without worktree (use main repo path directly)
+    // Disable auto-commit for quick commands to avoid committing directly to main branch
+    const quickSettings = {
+      ...channelSettings,
+      autoCommit: false
+    };
+
     await executeClaudePrompt(
       prompt,
       async (message: AgentMessage) => {
@@ -644,7 +650,7 @@ export async function handleClaudeQuickCommand(
         }
       },
       channelSettings.path,
-      channelSettings,
+      quickSettings, // Use modified settings with autoCommit disabled
       undefined, // No session resumption
       undefined, // No worktree path
       undefined, // No worktree branch

@@ -162,6 +162,7 @@ This command:
 - ✅ Uses the main repository (no worktree created)
 - ✅ No forum thread created
 - ✅ Faster for simple one-off tasks
+- ✅ Auto-commit is **disabled** (to prevent commits to main branch)
 - ❌ Cannot continue the conversation with @mentions
 - ❌ No session isolation
 
