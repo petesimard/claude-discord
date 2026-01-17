@@ -24,6 +24,260 @@ export interface ExecutionResult {
 }
 
 /**
+ * Unified message format for both SDK and CLI
+ */
+interface StreamMessage {
+  type: 'init' | 'assistant' | 'tool_use' | 'result' | 'error';
+  sessionId?: string;
+  content?: string;
+  toolName?: string;
+  error?: string;
+}
+
+/**
+ * Interface for executing Claude queries - implemented by both SDK and CLI
+ */
+interface ClaudeExecutor {
+  execute(prompt: string, workingPath: string, resumeSessionId?: string): AsyncGenerator<StreamMessage>;
+}
+
+/**
+ * SDK-based executor using the Claude Agent SDK
+ */
+class SdkExecutor implements ClaudeExecutor {
+  async *execute(prompt: string, workingPath: string, resumeSessionId?: string): AsyncGenerator<StreamMessage> {
+    const options = {
+      workingDirectory: workingPath,
+      settingSources: ["project" as SettingSource],
+      allowedTools: [
+        'Read',
+        'Write',
+        'Edit',
+        'Bash',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch'
+      ],
+      permissionMode: 'bypassPermissions' as const,
+      ...(resumeSessionId && { resume: resumeSessionId }),
+      env: {
+        ...process.env,
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+        DEBUG: process.env.DEBUG || '0'
+      },
+      onStderr: (data: string) => {
+        console.error('[Agent] Claude CLI stderr:', data);
+      },
+      onStdout: (data: string) => {
+        console.log('[Agent] Claude CLI stdout:', data);
+      }
+    };
+
+    for await (const message of query({ prompt, options })) {
+      // Capture session ID from init message
+      if ('subtype' in message && message.subtype === 'init' && 'session_id' in message) {
+        yield {
+          type: 'init',
+          sessionId: message.session_id as string
+        };
+      }
+
+      // Handle assistant messages (intermediate commentary)
+      if ('type' in message && (message as any).type === 'assistant' && !('result' in message)) {
+        const messageContent = (message as any).message?.content;
+        if (Array.isArray(messageContent)) {
+          for (const block of messageContent) {
+            if (block.type === 'text' && block.text) {
+              yield {
+                type: 'assistant',
+                content: block.text
+              };
+            }
+          }
+        }
+      }
+
+      // Handle tool use messages
+      if ('type' in message && (message as any).type === 'tool_use') {
+        const toolName = (message as any).name || 'unknown';
+        yield {
+          type: 'tool_use',
+          toolName: toolName
+        };
+      }
+
+      // Handle result messages
+      if ('result' in message) {
+        const result = (message as any).result;
+        yield {
+          type: 'result',
+          content: result
+        };
+      }
+
+      // Handle error messages
+      if ('error' in message) {
+        const error = (message as any).error;
+        const errorContent = (message as any).message?.content?.[0]?.text || String(error);
+        yield {
+          type: 'error',
+          error: error,
+          content: errorContent
+        };
+      }
+    }
+  }
+}
+
+/**
+ * CLI-based executor using the claude command
+ */
+class CliExecutor implements ClaudeExecutor {
+  async *execute(prompt: string, workingPath: string, resumeSessionId?: string): AsyncGenerator<StreamMessage> {
+    // Use --print for non-interactive output
+    // Use --dangerously-skip-permissions to match SDK behavior
+    const args = ['--print', '--dangerously-skip-permissions', prompt];
+
+    if (resumeSessionId) {
+      args.push('--resume', resumeSessionId);
+    }
+
+    console.log(`[Agent] Spawning claude CLI with args:`, args);
+
+    const claudeProcess = spawn('claude', args, {
+      cwd: workingPath,
+      env: process.env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Close stdin immediately
+    if (claudeProcess.stdin) {
+      claudeProcess.stdin.end();
+    }
+
+    let sessionId: string | undefined = resumeSessionId;
+    let outputBuffer = '';
+    let errorBuffer = '';
+    let currentTool: string | null = null;
+
+    // Create promise-based handlers for the process
+    const processPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        console.log('[Agent] CLI process timed out after 10 minutes');
+        claudeProcess.kill('SIGTERM');
+        reject(new Error('Claude CLI process timed out after 10 minutes'));
+      }, 600000);
+
+      claudeProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        console.log(`[Agent] Claude CLI exited with code ${code}`);
+
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Claude CLI exited with code ${code}: ${errorBuffer || outputBuffer}`));
+        }
+      });
+
+      claudeProcess.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+
+    // Set up data handlers that will yield messages
+    const messageQueue: StreamMessage[] = [];
+    let dataResolve: (() => void) | null = null;
+
+    const pushMessage = (message: StreamMessage) => {
+      messageQueue.push(message);
+      if (dataResolve) {
+        dataResolve();
+        dataResolve = null;
+      }
+    };
+
+    claudeProcess.stdout.on('data', (data: Buffer) => {
+      const text = data.toString();
+      outputBuffer += text;
+
+      // Look for session ID in output
+      const sessionIdMatch = text.match(/Session ID: ([a-f0-9-]+)/i);
+      if (sessionIdMatch && !sessionId) {
+        sessionId = sessionIdMatch[1];
+        console.log(`[Agent] Captured session ID from CLI: ${sessionId}`);
+        pushMessage({ type: 'init', sessionId });
+      }
+
+      // Detect tool usage patterns in output
+      const toolMatch = text.match(/(?:Using|Calling)\s+(\w+)\s+tool/i);
+      if (toolMatch && toolMatch[1] !== currentTool) {
+        currentTool = toolMatch[1];
+        pushMessage({ type: 'tool_use', toolName: currentTool });
+      }
+
+      // Send any text content as assistant messages
+      const lines = text.trim().split('\n');
+      for (const line of lines) {
+        if (line.trim() && !line.includes('Session ID:')) {
+          pushMessage({ type: 'assistant', content: line });
+        }
+      }
+    });
+
+    claudeProcess.stderr.on('data', (data: Buffer) => {
+      const text = data.toString();
+      errorBuffer += text;
+      console.log(`[Agent] CLI stderr: ${text}`);
+    });
+
+    // Yield messages as they come in
+    try {
+      while (true) {
+        if (messageQueue.length > 0) {
+          yield messageQueue.shift()!;
+        } else {
+          // Wait for more data or process completion
+          await Promise.race([
+            processPromise,
+            new Promise<void>((resolve) => {
+              dataResolve = resolve;
+            })
+          ]);
+
+          // Check if process is done
+          if (claudeProcess.exitCode !== null) {
+            break;
+          }
+        }
+      }
+
+      // Yield any remaining messages
+      while (messageQueue.length > 0) {
+        yield messageQueue.shift()!;
+      }
+
+      // Send final result
+      yield {
+        type: 'result',
+        content: outputBuffer.trim() || 'Task completed.'
+      };
+
+    } catch (error) {
+      // Send error message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      yield {
+        type: 'error',
+        error: 'execution_error',
+        content: errorMessage
+      };
+      throw error;
+    }
+  }
+}
+
+/**
  * Check if the claude CLI is available
  * @returns Promise that resolves to true if claude CLI is available, false otherwise
  */
@@ -37,135 +291,6 @@ async function checkClaudeCliAvailable(): Promise<boolean> {
 
     checkProcess.on('error', () => {
       resolve(false);
-    });
-  });
-}
-
-/**
- * Execute a prompt using the claude CLI
- * @param prompt The prompt to execute
- * @param onMessage Callback for streaming status updates
- * @param workingPath The working directory
- * @param resumeSessionId Optional session ID to resume
- * @returns Promise that resolves to the execution result
- */
-async function executeWithCli(
-  prompt: string,
-  onMessage: MessageCallback,
-  workingPath: string,
-  resumeSessionId?: string
-): Promise<ExecutionResult> {
-  return new Promise((resolve, reject) => {
-    // Use --print for non-interactive output
-    // Use --dangerously-skip-permissions to match SDK behavior (permissionMode: 'bypassPermissions')
-    const args = ['--print', '--dangerously-skip-permissions', prompt];
-
-    // Add resume flag if we have a session ID
-    if (resumeSessionId) {
-      args.push('--resume', resumeSessionId);
-    }
-
-    console.log(`[Agent] Spawning claude CLI with args:`, args);
-
-    const claudeProcess = spawn('claude', args, {
-      cwd: workingPath,
-      env: process.env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    // Close stdin immediately since we're not sending interactive input
-    // The prompt is passed as a command-line argument
-    if (claudeProcess.stdin) {
-      claudeProcess.stdin.end();
-    }
-
-    let sessionId: string | undefined = resumeSessionId;
-    let outputBuffer = '';
-    let errorBuffer = '';
-    let processTimeout: NodeJS.Timeout | null = null;
-
-    // Set a timeout for the process (10 minutes)
-    processTimeout = setTimeout(() => {
-      console.log('[Agent] CLI process timed out after 10 minutes');
-      claudeProcess.kill('SIGTERM');
-      reject(new Error('Claude CLI process timed out after 10 minutes'));
-    }, 600000);
-
-    // Handle stdout (tool outputs, results)
-    claudeProcess.stdout.on('data', async (data: Buffer) => {
-      const text = data.toString();
-      outputBuffer += text;
-
-      // Look for session ID in output
-      const sessionIdMatch = text.match(/Session ID: ([a-f0-9-]+)/i);
-      if (sessionIdMatch) {
-        sessionId = sessionIdMatch[1];
-        console.log(`[Agent] Captured session ID from CLI: ${sessionId}`);
-      }
-
-      // Send status updates for any output
-      if (text.trim()) {
-        await onMessage({
-          type: 'status',
-          content: '🔄 Working...'
-        });
-      }
-    });
-
-    // Handle stderr (status messages, errors)
-    claudeProcess.stderr.on('data', async (data: Buffer) => {
-      const text = data.toString();
-      errorBuffer += text;
-      console.log(`[Agent] CLI stderr: ${text}`);
-    });
-
-    // Handle process completion
-    claudeProcess.on('close', async (code) => {
-      console.log(`[Agent] Claude CLI exited with code ${code}`);
-
-      // Clear timeout
-      if (processTimeout) {
-        clearTimeout(processTimeout);
-      }
-
-      if (code === 0) {
-        // Success - send the output as the result
-        await onMessage({
-          type: 'result',
-          content: outputBuffer.trim() || 'Task completed.',
-          sessionId: sessionId
-        });
-
-        resolve({
-          sessionId: sessionId || 'unknown'
-        });
-      } else {
-        // Error
-        const errorMessage = errorBuffer || outputBuffer || `Claude CLI exited with code ${code}`;
-        await onMessage({
-          type: 'error',
-          content: `❌ CLI Error: ${errorMessage}`
-        });
-
-        reject(new Error(`Claude CLI exited with code ${code}: ${errorMessage}`));
-      }
-    });
-
-    // Handle process errors
-    claudeProcess.on('error', async (error) => {
-      console.error(`[Agent] Failed to spawn claude CLI:`, error);
-
-      // Clear timeout
-      if (processTimeout) {
-        clearTimeout(processTimeout);
-      }
-
-      await onMessage({
-        type: 'error',
-        content: `❌ Failed to start Claude CLI: ${error.message}\n\nMake sure the 'claude' command is installed and accessible.`
-      });
-
-      reject(error);
     });
   });
 }
@@ -258,7 +383,9 @@ export async function executeClaudePrompt(
       console.log('[Agent] 🐛 DEBUG mode is ENABLED - verbose output will be shown');
     }
 
-    // Check if we should use CLI mode
+    // Create the appropriate executor based on configuration
+    let executor: ClaudeExecutor;
+
     if (config.useCli) {
       console.log('[Agent] Using Claude Code CLI mode');
 
@@ -274,30 +401,16 @@ export async function executeClaudePrompt(
       }
 
       console.log('[Agent] Claude CLI is available');
-
-      // Execute using CLI
-      const result = await executeWithCli(
-        prompt,
-        onMessage,
-        actualWorkingPath,
-        resumeSessionId
-      );
-
-      // Add worktree info to result if available
-      const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
-      return {
-        ...result,
-        worktreePath: worktreeInfo?.path,
-        worktreeBranch: worktreeInfo?.branch
-      };
+      executor = new CliExecutor();
+    } else {
+      // SDK mode - verify API key is set
+      if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
+      }
+      console.log(`[Agent] Using Agent SDK mode`);
+      console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
+      executor = new SdkExecutor();
     }
-
-    // SDK mode - verify API key is set
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
-    }
-    console.log(`[Agent] Using Agent SDK mode`);
-    console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
 
     // Check if the working directory exists
     const fs = await import('fs');
@@ -358,98 +471,50 @@ export async function executeClaudePrompt(
       }
     }
 
-    // Configure the agent with all tools and bypass permissions
-    const options = {
-      workingDirectory: actualWorkingPath,
-      settingSources: ["project" as SettingSource],
-      allowedTools: [
-        'Read',
-        'Write',
-        'Edit',
-        'Bash',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch'
-      ],
-      permissionMode: 'bypassPermissions' as const,
-      ...(resumeSessionId && { resume: resumeSessionId }),
-      // Explicitly pass API key and DEBUG flag via environment
-      env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-        DEBUG: process.env.DEBUG || '0'
-      },
-      // Enable debug logging to capture Claude CLI output
-      onStderr: (data: string) => {
-        console.error('[Agent] Claude CLI stderr:', data);
-      },
-      onStdout: (data: string) => {
-        console.log('[Agent] Claude CLI stdout:', data);
-      }
-    };
-
+    // Execute the query using the unified executor and stream messages
     let currentTool: string | null = null;
     let sessionId: string | undefined = resumeSessionId;
     let hasResult = false;
     let hasError = false;
 
-    // console.log('[Agent] Starting query with options:', JSON.stringify({
-    //   workingDirectory: options.workingDirectory,
-    //   allowedTools: options.allowedTools,
-    //   permissionMode: options.permissionMode,
-    //   resume: options.resume || 'none'
-    // }));
-
-    // Execute the query and stream messages
-    for await (const message of query({ prompt, options })) {
+    for await (const message of executor.execute(prompt, actualWorkingPath, resumeSessionId)) {
       // Debug: Log message type
-      console.log(`[Agent] Message type: ${(message as any).type}, subtype: ${(message as any).subtype}, has result: ${'result' in message}`);
+      console.log(`[Agent] Message type: ${message.type}, sessionId: ${message.sessionId || 'none'}`);
 
       // Capture session ID from init message
-      if ('subtype' in message && message.subtype === 'init' && 'session_id' in message) {
-        sessionId = message.session_id as string;
+      if (message.type === 'init' && message.sessionId) {
+        sessionId = message.sessionId;
         console.log(`[Agent] Session ID: ${sessionId}`);
       }
 
       // Handle assistant messages (intermediate commentary)
-      if ('type' in message && (message as any).type === 'assistant' && !('result' in message)) {
-        const messageContent = (message as any).message?.content;
-        if (Array.isArray(messageContent)) {
-          // Extract text from content blocks
-          for (const block of messageContent) {
-            if (block.type === 'text' && block.text) {
-              console.log(`[Agent] Assistant message: ${block.text.substring(0, 100)}...`);
-              await onMessage({
-                type: 'status',
-                content: block.text
-              });
-            }
-          }
-        }
+      if (message.type === 'assistant' && message.content) {
+        console.log(`[Agent] Assistant message: ${message.content.substring(0, 100)}...`);
+        await onMessage({
+          type: 'status',
+          content: message.content
+        });
       }
 
       // Handle tool use messages (status updates)
-      if ('type' in message && (message as any).type === 'tool_use') {
-        const toolName = (message as any).name || 'unknown';
-        if (toolName !== currentTool) {
-          currentTool = toolName;
+      if (message.type === 'tool_use' && message.toolName) {
+        if (message.toolName !== currentTool) {
+          currentTool = message.toolName;
           await onMessage({
             type: 'status',
-            content: `🔄 Working... (using ${toolName} tool)`
+            content: `🔄 Working... (using ${message.toolName} tool)`
           });
         }
       }
 
       // Handle result messages (final output)
-      if ('result' in message) {
-        const result = (message as any).result;
+      if (message.type === 'result' && message.content) {
         hasResult = true;
-        console.log(`[Agent] Got result: ${result?.substring(0, 100)}...`);
+        console.log(`[Agent] Got result: ${message.content.substring(0, 100)}...`);
         const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
         await onMessage({
           type: 'result',
-          content: result,
+          content: message.content,
           sessionId: sessionId,
           vcsType: vcsType,
           worktreePath: worktreeInfo?.path,
@@ -458,15 +523,14 @@ export async function executeClaudePrompt(
       }
 
       // Handle error messages
-      if ('error' in message) {
-        const error = (message as any).error;
-        const errorContent = (message as any).message?.content?.[0]?.text || String(error);
+      if (message.type === 'error') {
+        const errorContent = message.content || message.error || 'Unknown error';
         hasError = true;
-        console.log(`[Agent] Got error: ${error}`);
+        console.log(`[Agent] Got error: ${message.error}`);
 
         // Check for billing errors
         const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
-        if (error === 'billing_error' || errorContent.includes('Credit balance is too low')) {
+        if (message.error === 'billing_error' || errorContent.includes('Credit balance is too low')) {
           await onMessage({
             type: 'error',
             content: `❌ Billing Error: ${errorContent}\n\nYour Anthropic API key has insufficient credits. Please add credits at https://console.anthropic.com/`,
