@@ -25,24 +25,13 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 Before you begin, you'll need:
 
 1. **Node.js 18 or higher** - [Download here](https://nodejs.org/)
-2. **Discord Bot Token** - From Discord Developer Portal
-3. **One of the following**:
-   - **Claude Code CLI** (recommended) - Direct CLI integration
-   - **Anthropic API Key** - To use the Agent SDK
+2. **Claude Code CLI** - Required by the Agent SDK
+3. **Discord Bot Token** - From Discord Developer Portal
+4. **Anthropic API Key** - From Anthropic Console
 
-### Execution Modes
+### Installing Claude Code
 
-The bot supports two modes for executing Claude Code:
-
-#### Mode 1: Claude Code CLI (Recommended)
-
-Uses the installed `claude` command directly. This is the simplest mode and doesn't require an API key.
-
-**Requirements:**
-- Claude Code CLI installed and in PATH
-- No API key needed
-
-**Installing Claude Code CLI:**
+The Agent SDK requires Claude Code as its runtime. Install it using one of these methods:
 
 ```bash
 # macOS/Linux/WSL
@@ -55,24 +44,7 @@ brew install --cask claude-code
 npm install -g @anthropic-ai/claude-code
 ```
 
-Verify installation:
-```bash
-claude --version
-```
-
 See [Claude Code setup](https://code.claude.com/docs/en/setup) for Windows and other options.
-
-#### Mode 2: Agent SDK
-
-Uses the Claude Agent SDK with your API key. This mode is useful if you want programmatic access via the SDK.
-
-**Requirements:**
-- Anthropic API key from [console.anthropic.com](https://console.anthropic.com/)
-- Claude Code CLI still required (used internally by the SDK)
-
-**How the bot chooses the mode:**
-- If `ANTHROPIC_API_KEY` is set in `.env`: Uses Agent SDK mode
-- If `ANTHROPIC_API_KEY` is not set: Uses CLI mode (checks if `claude` command is available)
 
 ## Setup
 
@@ -98,13 +70,8 @@ Uses the Claude Agent SDK with your API key. This mode is useful if you want pro
 4. Copy the generated URL and open it in your browser
 5. Select your server and authorize the bot
 
-### 3. Get an Anthropic API Key (Optional)
+### 3. Get an Anthropic API Key
 
-**Only required if you want to use Agent SDK mode.**
-
-If you prefer CLI mode (recommended), skip this step and leave `ANTHROPIC_API_KEY` empty in your `.env` file.
-
-For Agent SDK mode:
 1. Go to the [Anthropic Console](https://console.anthropic.com/)
 2. Sign in or create an account
 3. Navigate to "API Keys"
@@ -129,15 +96,6 @@ For Agent SDK mode:
    ```
 
 4. Edit `.env` and fill in your credentials:
-
-   **For CLI mode (recommended):**
-   ```env
-   DISCORD_TOKEN=your_discord_bot_token_here
-   # Leave ANTHROPIC_API_KEY empty or remove it to use CLI mode
-   CHANNEL_MAPPINGS={"1234567890123456789":{"path":"/path/to/project1"},"9876543210987654321":{"path":"/path/to/project2"}}
-   ```
-
-   **For Agent SDK mode:**
    ```env
    DISCORD_TOKEN=your_discord_bot_token_here
    ANTHROPIC_API_KEY=your_anthropic_api_key_here
@@ -145,7 +103,7 @@ For Agent SDK mode:
    ```
 
    - `DISCORD_TOKEN`: Your Discord bot token from step 1
-   - `ANTHROPIC_API_KEY`: **(Optional)** Your Anthropic API key from step 3. Leave empty to use CLI mode.
+   - `ANTHROPIC_API_KEY`: Your Anthropic API key from step 3
    - `CHANNEL_MAPPINGS`: **(Required)** JSON mapping of Discord channel IDs to their settings - see below
 
 ## Usage
@@ -757,23 +715,10 @@ If the agent fails with "Claude Code process exited with code 1":
    - Try the command again and check the console logs
 
 2. **Verify Claude Code is installed**: `claude --version`
-3. **Check your execution mode**:
-   - CLI mode: Ensure `claude` command is in PATH
-   - SDK mode: Check that `ANTHROPIC_API_KEY` is valid
+3. **Check that your `ANTHROPIC_API_KEY` is valid**
 4. **Ensure the configured directories exist and are accessible**
 
-### "Claude Code CLI is not installed" error
-
-If using CLI mode and you see "Claude Code CLI is not installed or not in PATH":
-
-- Install Claude Code CLI (see Prerequisites section)
-- Verify it's in PATH: `which claude` (Linux/Mac) or `where claude` (Windows)
-- Restart the bot after installation
-- Alternatively, switch to SDK mode by setting `ANTHROPIC_API_KEY` in `.env`
-
 ### "Credit balance is too low" or billing errors
-
-**This only applies to Agent SDK mode.**
 
 If you see errors like "Credit balance is too low" or the bot says there's a billing error:
 
@@ -781,7 +726,6 @@ If you see errors like "Credit balance is too low" or the bot says there's a bil
 - Go to [Anthropic Console](https://console.anthropic.com/) and add credits to your account
 - You can check your current balance in the Console under "Usage & Billing"
 - New accounts may need to add payment information before making API calls
-- Alternatively, switch to CLI mode by removing `ANTHROPIC_API_KEY` from `.env`
 
 ### Permission errors in working directory
 
@@ -810,7 +754,7 @@ npm run type-check
 - **Restrict bot permissions** - Only give it necessary Discord permissions
 - **Control working directory access** - Limit what files the agent can access
 - **Run in trusted environments** - The agent can execute code and commands
-- **Monitor API usage** - If using SDK mode, the Anthropic API key has usage limits
+- **Monitor API usage** - The Anthropic API key has usage limits
 
 ## License
 

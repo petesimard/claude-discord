@@ -2,8 +2,6 @@ import { query, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { detectVcs, VcsType } from '../utils/vcs.js';
 import type { ChannelSettings } from '../utils/config.js';
 import { createWorktree, WorktreeInfo } from '../utils/worktree.js';
-import { config } from '../utils/config.js';
-import { spawn } from 'child_process';
 import * as path from 'path';
 
 export interface AgentMessage {
@@ -21,126 +19,6 @@ export interface ExecutionResult {
   sessionId: string;
   worktreePath?: string;
   worktreeBranch?: string;
-}
-
-/**
- * Check if the claude CLI is available
- * @returns Promise that resolves to true if claude CLI is available, false otherwise
- */
-async function checkClaudeCliAvailable(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const checkProcess = spawn('which', ['claude']);
-
-    checkProcess.on('close', (code) => {
-      resolve(code === 0);
-    });
-
-    checkProcess.on('error', () => {
-      resolve(false);
-    });
-  });
-}
-
-/**
- * Execute a prompt using the claude CLI
- * @param prompt The prompt to execute
- * @param onMessage Callback for streaming status updates
- * @param workingPath The working directory
- * @param resumeSessionId Optional session ID to resume
- * @returns Promise that resolves to the execution result
- */
-async function executeWithCli(
-  prompt: string,
-  onMessage: MessageCallback,
-  workingPath: string,
-  resumeSessionId?: string
-): Promise<ExecutionResult> {
-  return new Promise((resolve, reject) => {
-    const args = [prompt];
-
-    // Add resume flag if we have a session ID
-    if (resumeSessionId) {
-      args.push('--resume', resumeSessionId);
-    }
-
-    console.log(`[Agent] Spawning claude CLI with args:`, args);
-
-    const claudeProcess = spawn('claude', args, {
-      cwd: workingPath,
-      env: process.env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    let sessionId: string | undefined = resumeSessionId;
-    let outputBuffer = '';
-    let errorBuffer = '';
-
-    // Handle stdout (tool outputs, results)
-    claudeProcess.stdout.on('data', async (data: Buffer) => {
-      const text = data.toString();
-      outputBuffer += text;
-
-      // Look for session ID in output
-      const sessionIdMatch = text.match(/Session ID: ([a-f0-9-]+)/i);
-      if (sessionIdMatch) {
-        sessionId = sessionIdMatch[1];
-        console.log(`[Agent] Captured session ID from CLI: ${sessionId}`);
-      }
-
-      // Send status updates for any output
-      if (text.trim()) {
-        await onMessage({
-          type: 'status',
-          content: '🔄 Working...'
-        });
-      }
-    });
-
-    // Handle stderr (status messages, errors)
-    claudeProcess.stderr.on('data', async (data: Buffer) => {
-      const text = data.toString();
-      errorBuffer += text;
-      console.log(`[Agent] CLI stderr: ${text}`);
-    });
-
-    // Handle process completion
-    claudeProcess.on('close', async (code) => {
-      console.log(`[Agent] Claude CLI exited with code ${code}`);
-
-      if (code === 0) {
-        // Success - send the output as the result
-        await onMessage({
-          type: 'result',
-          content: outputBuffer.trim() || 'Task completed.',
-          sessionId: sessionId
-        });
-
-        resolve({
-          sessionId: sessionId || 'unknown'
-        });
-      } else {
-        // Error
-        const errorMessage = errorBuffer || outputBuffer || `Claude CLI exited with code ${code}`;
-        await onMessage({
-          type: 'error',
-          content: `❌ CLI Error: ${errorMessage}`
-        });
-
-        reject(new Error(`Claude CLI exited with code ${code}: ${errorMessage}`));
-      }
-    });
-
-    // Handle process errors
-    claudeProcess.on('error', async (error) => {
-      console.error(`[Agent] Failed to spawn claude CLI:`, error);
-      await onMessage({
-        type: 'error',
-        content: `❌ Failed to start Claude CLI: ${error.message}\n\nMake sure the 'claude' command is installed and accessible.`
-      });
-
-      reject(error);
-    });
-  });
 }
 
 /**
@@ -231,45 +109,10 @@ export async function executeClaudePrompt(
       console.log('[Agent] 🐛 DEBUG mode is ENABLED - verbose output will be shown');
     }
 
-    // Check if we should use CLI mode
-    if (config.useCli) {
-      console.log('[Agent] Using Claude Code CLI mode');
-
-      // Check if claude CLI is available
-      const cliAvailable = await checkClaudeCliAvailable();
-      if (!cliAvailable) {
-        throw new Error(
-          'Claude Code CLI is not installed or not in PATH.\n\n' +
-          'Please install Claude Code CLI:\n' +
-          '  https://github.com/anthropics/claude-code\n\n' +
-          'Or set ANTHROPIC_API_KEY in .env to use the Agent SDK instead.'
-        );
-      }
-
-      console.log('[Agent] Claude CLI is available');
-
-      // Execute using CLI
-      const result = await executeWithCli(
-        prompt,
-        onMessage,
-        actualWorkingPath,
-        resumeSessionId
-      );
-
-      // Add worktree info to result if available
-      const worktreeInfo = createdWorktreeInfo || resumedWorktreeInfo;
-      return {
-        ...result,
-        worktreePath: worktreeInfo?.path,
-        worktreeBranch: worktreeInfo?.branch
-      };
-    }
-
-    // SDK mode - verify API key is set
+    // Verify API key is set
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
     }
-    console.log(`[Agent] Using Agent SDK mode`);
     console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
 
     // Check if the working directory exists

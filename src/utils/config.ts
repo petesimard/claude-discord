@@ -14,8 +14,7 @@ export interface ChannelSettings {
 
 export interface Config {
   discordToken: string;
-  anthropicApiKey?: string;  // Optional - if not set, will use claude CLI instead
-  useCli: boolean;  // True if using CLI, false if using SDK
+  anthropicApiKey: string;
   channelMappings: Map<string, ChannelSettings>;
 }
 
@@ -118,20 +117,9 @@ export function loadConfig(): Config {
     );
   }
 
-  // Check if API key is provided
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  const useCli = !anthropicApiKey;
-
-  if (useCli) {
-    console.log('[Config] No ANTHROPIC_API_KEY found, will use Claude Code CLI');
-  } else {
-    console.log('[Config] ANTHROPIC_API_KEY found, will use Agent SDK');
-  }
-
   return {
     discordToken: validateEnvVar('DISCORD_TOKEN', process.env.DISCORD_TOKEN),
-    anthropicApiKey: anthropicApiKey,
-    useCli: useCli,
+    anthropicApiKey: validateEnvVar('ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY),
     channelMappings,
   };
 }
