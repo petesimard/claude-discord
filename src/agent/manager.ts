@@ -2,6 +2,7 @@ import { query, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { detectVcs, VcsType } from '../utils/vcs.js';
 import type { ChannelSettings } from '../utils/config.js';
 import { createWorktree, WorktreeInfo } from '../utils/worktree.js';
+import { config } from '../utils/config.js';
 import * as path from 'path';
 
 export interface AgentMessage {
@@ -109,11 +110,16 @@ export async function executeClaudePrompt(
       console.log('[Agent] 🐛 DEBUG mode is ENABLED - verbose output will be shown');
     }
 
-    // Verify API key is set
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
+    // Check execution mode and log appropriately
+    if (config.useCli) {
+      console.log(`[Agent] Using Claude Code CLI mode (CLI will use its own authentication)`);
+    } else {
+      console.log(`[Agent] Using Agent SDK mode`);
+      if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error('ANTHROPIC_API_KEY environment variable is not set!');
+      }
+      console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
     }
-    console.log(`[Agent] API key is set: ${process.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
 
     // Check if the working directory exists
     const fs = await import('fs');

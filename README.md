@@ -25,9 +25,9 @@ A Discord bot that integrates with Claude Code, allowing you to interact with an
 Before you begin, you'll need:
 
 1. **Node.js 18 or higher** - [Download here](https://nodejs.org/)
-2. **Claude Code CLI** - Required by the Agent SDK
+2. **Claude Code CLI** - Required by the Agent SDK (or used directly in CLI mode)
 3. **Discord Bot Token** - From Discord Developer Portal
-4. **Anthropic API Key** - From Anthropic Console
+4. **Anthropic API Key** - Optional (if not set, will use Claude CLI's authentication)
 
 ### Installing Claude Code
 
@@ -103,8 +103,16 @@ See [Claude Code setup](https://code.claude.com/docs/en/setup) for Windows and o
    ```
 
    - `DISCORD_TOKEN`: Your Discord bot token from step 1
-   - `ANTHROPIC_API_KEY`: Your Anthropic API key from step 3
+   - `ANTHROPIC_API_KEY`: **(Optional)** Your Anthropic API key from step 3
+     - If set: Uses Agent SDK mode
+     - If not set: Uses CLI mode (requires `claude` to be authenticated)
    - `CHANNEL_MAPPINGS`: **(Required)** JSON mapping of Discord channel IDs to their settings - see below
+
+   **Authentication Modes:**
+   - **Agent SDK mode** (with `ANTHROPIC_API_KEY`): Uses your API key directly
+   - **CLI mode** (without `ANTHROPIC_API_KEY`): Uses Claude CLI's own authentication
+     - Make sure you've authenticated the CLI: `claude auth login`
+     - The CLI will use credentials from `~/.config/claude/config.json`
 
 ## Usage
 
@@ -716,7 +724,9 @@ If the agent fails with "Claude Code process exited with code 1":
    - Try the command again and check the console logs
 
 2. **Verify Claude Code is installed**: `claude --version`
-3. **Check that your `ANTHROPIC_API_KEY` is valid**
+3. **Check authentication**:
+   - If using Agent SDK mode: Verify `ANTHROPIC_API_KEY` is set and valid
+   - If using CLI mode: Make sure CLI is authenticated with `claude auth login`
 4. **Ensure the configured directories exist and are accessible**
 
 ### "Credit balance is too low" or billing errors
