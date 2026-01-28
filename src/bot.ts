@@ -313,14 +313,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
             inline: false
           });
 
-          // Create restore button instead of commit button
-          const restoreButton = new ButtonBuilder()
-            .setCustomId(`restore_${commitHash}_${sessionId}`)
-            .setLabel('Restore to this point')
-            .setStyle(ButtonStyle.Secondary)
-            .setEmoji('⏮️');
-
-          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+          // Create restore button (plus merge/close if in worktree)
+          const buttons: ButtonBuilder[] = [
+            new ButtonBuilder()
+              .setCustomId(`restore_${commitHash}_${sessionId}`)
+              .setLabel('Restore to this point')
+              .setStyle(ButtonStyle.Secondary)
+              .setEmoji('⏮️'),
+          ];
+          if (permissions.worktreeBranch && permissions.worktreeBranch.startsWith('worktree/')) {
+            buttons.push(
+              new ButtonBuilder()
+                .setCustomId(`merge_${sessionId}`)
+                .setLabel('Merge into main')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔀'),
+              new ButtonBuilder()
+                .setCustomId(`close_worktree_${sessionId}`)
+                .setLabel('Close worktree')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            );
+          }
+          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 
           // Update the original message with the new embed and button
           await originalMessage.edit({ embeds: [updatedEmbed], components: [actionRow] });
@@ -337,15 +352,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setFooter({ text: 'Claude Code Agent' })
             .setTimestamp();
 
-          const restoreButton = new ButtonBuilder()
-            .setCustomId(`restore_${commitHash}_${sessionId}`)
-            .setLabel('Restore to this point')
-            .setStyle(ButtonStyle.Secondary)
-            .setEmoji('⏮️');
+          const fallbackButtons: ButtonBuilder[] = [
+            new ButtonBuilder()
+              .setCustomId(`restore_${commitHash}_${sessionId}`)
+              .setLabel('Restore to this point')
+              .setStyle(ButtonStyle.Secondary)
+              .setEmoji('⏮️'),
+          ];
+          if (permissions.worktreeBranch && permissions.worktreeBranch.startsWith('worktree/')) {
+            fallbackButtons.push(
+              new ButtonBuilder()
+                .setCustomId(`merge_${sessionId}`)
+                .setLabel('Merge into main')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔀'),
+              new ButtonBuilder()
+                .setCustomId(`close_worktree_${sessionId}`)
+                .setLabel('Close worktree')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🗑️'),
+            );
+          }
+          const fallbackActionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...fallbackButtons);
 
-          const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
-
-          await interaction.editReply({ content: '', embeds: [embed], components: [actionRow] });
+          await interaction.editReply({ content: '', embeds: [embed], components: [fallbackActionRow] });
         }
       } else {
         // Handle error

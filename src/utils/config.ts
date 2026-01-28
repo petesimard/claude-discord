@@ -123,9 +123,9 @@ export function loadConfig(): Config {
   const useCli = !anthropicApiKey;
 
   if (useCli) {
-    console.log('[Config] No ANTHROPIC_API_KEY found, will use Claude Code CLI');
+    console.log('[Config] No ANTHROPIC_API_KEY found, will use Claude Code CLI authentication');
   } else {
-    console.log('[Config] ANTHROPIC_API_KEY found, will use Agent SDK');
+    console.log('[Config] ANTHROPIC_API_KEY found');
   }
 
   return {

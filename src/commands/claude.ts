@@ -229,13 +229,29 @@ export async function handleClaudeCommand(
             // Create action buttons (or restore button if committed)
             let components: any[] = [];
             if (commitInfo) {
-              // Show restore button if changes were committed
-              const restoreButton = new ButtonBuilder()
-                .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
-                .setLabel('Restore to this point')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('⏮️');
-              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              // Show restore button if changes were committed, plus merge/close if in worktree
+              const buttons: ButtonBuilder[] = [
+                new ButtonBuilder()
+                  .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
+                  .setLabel('Restore to this point')
+                  .setStyle(ButtonStyle.Secondary)
+                  .setEmoji('⏮️'),
+              ];
+              if (message.worktreeBranch && message.worktreeBranch.startsWith('worktree/')) {
+                buttons.push(
+                  new ButtonBuilder()
+                    .setCustomId(`merge_${message.sessionId}`)
+                    .setLabel('Merge into main')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🔀'),
+                  new ButtonBuilder()
+                    .setCustomId(`close_worktree_${message.sessionId}`)
+                    .setLabel('Close worktree')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('🗑️'),
+                );
+              }
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
               components = [actionRow];
             } else {
               // Show regular action buttons
@@ -436,13 +452,29 @@ export async function handleClaudeContinueCommand(
             // Create action buttons (or restore button if committed)
             let components: any[] = [];
             if (commitInfo) {
-              // Show restore button if changes were committed
-              const restoreButton = new ButtonBuilder()
-                .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
-                .setLabel('Restore to this point')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('⏮️');
-              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(restoreButton);
+              // Show restore button if changes were committed, plus merge/close if in worktree
+              const buttons: ButtonBuilder[] = [
+                new ButtonBuilder()
+                  .setCustomId(`restore_${commitInfo.hash}_${message.sessionId}`)
+                  .setLabel('Restore to this point')
+                  .setStyle(ButtonStyle.Secondary)
+                  .setEmoji('⏮️'),
+              ];
+              if (message.worktreeBranch && message.worktreeBranch.startsWith('worktree/')) {
+                buttons.push(
+                  new ButtonBuilder()
+                    .setCustomId(`merge_${message.sessionId}`)
+                    .setLabel('Merge into main')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🔀'),
+                  new ButtonBuilder()
+                    .setCustomId(`close_worktree_${message.sessionId}`)
+                    .setLabel('Close worktree')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('🗑️'),
+                );
+              }
+              const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
               components = [actionRow];
             } else {
               // Show regular action buttons
